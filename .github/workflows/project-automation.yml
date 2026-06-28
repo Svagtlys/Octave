@@ -1,0 +1,70 @@
+name: Project Automation
+
+on:
+  pull_request:
+    types: [ready_for_review]
+
+jobs:
+  move-to-in-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Move linked issues to In Review
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+          PROJECT_ID: PVT_kwHOArV0zM4Bb38A
+          STATUS_FIELD_ID: PVTSSF_lAHOArV0zM4Bb38AzhWlGD8
+          IN_REVIEW_OPTION_ID: 3d7c30db
+          OWNER: ${{ github.repository_owner }}
+          REPO: ${{ github.event.repository.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Get issues linked to this PR via closing keywords
+          ISSUE_NUMBERS=$(gh api graphql -f query='
+            query($owner: String!, $repo: String!, $pr: Int!) {
+              repository(owner: $owner, name: $repo) {
+                pullRequest(number: $pr) {
+                  closingIssuesReferences(first: 10) {
+                    nodes { number }
+                  }
+                }
+              }
+            }' \
+            -f owner="$OWNER" \
+            -f repo="$REPO" \
+            -F pr=$PR_NUMBER \
+            --jq '.data.repository.pullRequest.closingIssuesReferences.nodes[].number')
+
+          for ISSUE_NUMBER in $ISSUE_NUMBERS; do
+            # Get the project item ID for this issue
+            ITEM_ID=$(gh api graphql -f query='
+              query($owner: String!, $repo: String!, $issue: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $issue) {
+                    projectItems(first: 10) {
+                      nodes { id }
+                    }
+                  }
+                }
+              }' \
+              -f owner="$OWNER" \
+              -f repo="$REPO" \
+              -F issue=$ISSUE_NUMBER \
+              --jq '.data.repository.issue.projectItems.nodes[0].id')
+
+            if [ -n "$ITEM_ID" ]; then
+              gh api graphql -f query='
+                mutation($project: ID!, $item: ID!, $field: ID!, $value: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $project
+                    itemId: $item
+                    fieldId: $field
+                    value: { singleSelectOptionId: $value }
+                  }) { projectV2Item { id } }
+                }' \
+                -f project="$PROJECT_ID" \
+                -f item="$ITEM_ID" \
+                -f field="$STATUS_FIELD_ID" \
+                -f value="$IN_REVIEW_OPTION_ID"
+              echo "Moved issue #$ISSUE_NUMBER to In Review"
+            fi
+          done

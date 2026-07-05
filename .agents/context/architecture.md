@@ -1,158 +1,123 @@
-# Octave Architecture
+# Octave — System & Component Architecture
+
+> For full detailed architecture, see [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md) and the diagrams in [docs/diagrams/](../../docs/diagrams/).
 
 ## Overview
 
-Octave is a local-first agent harness that acts as a proactive personal assistant. It gathers, sorts, stores, and presents knowledge to improve the user's life — both reactively (through a chat interface) and proactively (through scheduled polling and event-driven automation via external tools like n8n).
+Octave is a local-first agent harness that orchestrates MCP (Model Context Protocol) servers and inference engines. It is built around four core backend components connected to a React frontend, with all data stored in a vector-capable local database.
 
-Octave is intentionally bare-bones: it is the **glue** tying together pluggable MCP (Model Context Protocol) servers. It makes autonomous decisions about what to do and when, but delegates all execution to connected MCP servers.
+## Technology Stack
 
-## System Architecture
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React (Vite), WebSocket/SSE for real-time |
+| Backend | Python, FastAPI, REST + WebSocket |
+| Database | SQLite with vec0 extension (default) or PostgreSQL with pgvector |
+| Migrations | Alembic |
+| Protocol | MCP (JSON-RPC 2.0) via stdio or HTTP/SSE transports |
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     External MCP Servers                    │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────────┐   │
-│  │ Filesys  │  │  Vector  │  │  Hass    │  │   n8n      │   │
-│  │   MCP    │  │  DB MCP  │  │   MCP    │  │   MCP      │   │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬───────┘   │
-└───────┼─────────────┼─────────────┼─────────────┼───────────┘
-        │             │             │             │
-        ▼             ▼             ▼             ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      Octave Backend                         │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │                    MCP Gateway                       │   │
-│  │  - Connection pool (StdIO/HTTP/SSE)                  │   │
-│  │  - Tool registry (custom names/descriptions)         │   │
-│  │  - Gateway skill loader                              │   │
-│  │  - Role tagging (kb_read, kb_write, scheduled, etc.) │   │
-│  └──────────────────┬───────────────────────────────────┘   │
-│                     │                                       │
-│         ┌───────────┴───────────┐                           │
-│         ▼                       ▼                           │
-│  ┌──────────────┐        ┌──────────────┐                   │
-│  │ Context      │───────▶│ Context Vault│                   │
-│  │ Assembler    │        │ Manager      │                   │
-│  │              │        │ (Indexer)    │                   │
-│  │ - Load prefs │        │ - Scan KB    │                   │
-│  │ - Load skills│        │ - Parse tags │                   │
-│  │ - Retrieve   │        │ - Build vault│                   │
-│  │   knowledge  │        │ - Expose     │                   │
-│  │ - Attach gw  │        │   rebuild    │                   │
-│  │   skills     │        │   tools      │                   │
-│  └──────┬───────┘        └──────────────┘                   │
-│         ▼                                                   │
-│  ┌──────────────┐                                           │
-│  │ Reasoning    │                                           │
-│  │   Engine     │                                           │
-│  │  (LLM Loop)  │                                           │
-│  └──────────────┘                                           │
-└─────────────────────────────────────────────────────────────┘
-```
+## System Components
 
-## Core Components
+### Frontend (React)
 
-### 1. MCP Gateway
+Six view areas mounted on a shared layout shell:
 
-Manages all MCP server connections and tool routing.
+- **Core Layout** — Navigation shell, sidebar, responsive content area
+- **Chat Interface** — Message display, input, real-time streaming, conversation history
+- **MCP Connector View** — Server list, configuration, tool explorer, manual tool testing
+- **Context Manager View** — Vault browser, item editor, running context viewer
+- **Agent Manager View** — Agent status dashboard, context panel, result viewer
+- **Settings** — Inference engine config, MCP global settings, user preferences
 
-**Responsibilities:**
-- Start, stop, restart MCP servers (StdIO, HTTP, SSE transport)
-- Maintain tool registry with custom names and descriptions per connection
-- Load and cache gateway skills for each MCP
-- Allows the user to tag tools with roles for use by Octave internal logic
-- Route tool calls to correct MCP connection
+### Backend Subsystems
 
-**Functional Roles:**
+#### Inference Engine Connector
 
-| Role | Description | Example |
-|------|-------------|---------|
-| `kb_read` | Tools that retrieve knowledge | FS `read_file`, VDB `search` |
-| `kb_write` | Tools that persist knowledge | FS `write_file` |
+Pluggable adapter interface for LLM inference engines.
 
-### 2. Context Assembler
+- Abstract adapter interface (OpenAI-compatible REST format)
+- Prompt assembly pipeline (system + injected context + user message)
+- Streaming response support (SSE/WebSocket)
+- Embedding model support (vector generation for Context Manager)
+- Model tagging system (capability tags: `thinking`, `coding`, `quick`)
+- Health check and fallback mechanism
 
-Builds the LLM prompt from available knowledge, skills, and preferences.
+**Interacts with:** Context Manager (receives context bundles), Agent Manager (receives turn triggers), MCP Connector (requests tool invocations)
 
-**Assembly Order:**
-1. Base system prompt (Octave identity/instructions or subagent prompt)
-2. Auto-loaded preferences (from KB *preferences* index)
-3. Auto-loaded skill names and descriptions, or full skill body (from KB *skills* index, filtered by trigger keywords, basic info vs full body determined by settings)
-4. Retrieved knowledge (semantic/keyword search via *kb_read* MCP tools)
-6. User message or event context
+#### MCP Connector
 
-### 3. Context Vault Manager
+Model Context Protocol client implementation.
 
-Indexes the knowledge base and builds the Context Vault.
+- JSON-RPC 2.0 transport layer
+- stdio (subprocess) and HTTP/SSE (remote) transports
+- Server lifecycle manager (start/stop/restart/health)
+- Tool discovery and caching
+- Tool execution engine (invoke, handle errors, timeouts)
+- Configuration persistence (stored in unified database)
+- Tool tagging system (internal Octave labels)
+- Tool re-naming / re-describing (custom agent-facing names and descriptions)
 
-**Indexed Content:**
-- *preferences* — User preferences (auto-injected into system prompt)
-- *skills* — Skill metadata (loaded on trigger keyword match or via invocation tool)
-- *prompts* — Reusable prompt templates, either for common scenarios or for use in subagents
+**Interacts with:** Context Manager (tagged tool discovery), Inference Engine Connector (executes tool calls), Frontend (exposes tool inventory)
 
-**Non-Indexed Content:**
-- *general* — General knowledge (searched on-demand by LLM via `kb_read` MCPs)
+#### Context Manager
 
-### 4. Reasoning Engine
+Central knowledge and context assembly subsystem.
 
-Orchestrates the LLM interaction loop.
+- Context vault data model (skills, prompts, preferences, agent state)
+- Vector-capable storage layer (CRUD + vector indexing)
+- Tagged MCP tool vault builder (populates vault via tagged tools)
+- Context injection engine (rule/trigger-based selection)
+- Agent context lifecycle (archival of completed runs)
+- Relevance scoring and token budget management
+- External database adapter interface (optional MCP override)
+- Skill-to-tool/prompt linking and parameter templating
+- Conversation-to-vector indexing
+- Vector search query interface (semantic similarity search)
+- Skill-to-model linking via tags
 
-**Flow:**
-1. Receive user message or event trigger
-2. Context Assembler builds prompt
-3. LLM generates response (may include tool calls)
-4. MCP Gateway routes tool calls
-5. Results injected back into context
-6. Repeat until LLM produces final response
+**Interacts with:** MCP Connector (vault population), Inference Engine Connector (supplies context bundles), Agent Manager (receives completed run context), Frontend (exposes vault)
 
-## Configuration
+#### Agent Manager
 
-Main configuration file: `config/octave.yaml`
+Agent lifecycle orchestration and message routing.
 
-```yaml
-# LLM Provider
-llm:
-  provider: "ollama"
-  url: "http://localhost:11434"
-  model: "qwen3-235b-a22b"
-  temperature: 0.7
+- Agent lifecycle model (spawn, pause, resume, terminate)
+- Agent registry (track agents, IDs, status, context)
+- Message router (deliver to correct agent, broadcast)
+- Result collector (capture and query agent outputs)
+- Inter-agent result sharing
+- Priority and scheduling (queue management, resource constraints)
 
-# MCP Integrations
-integrations:
-  - name: "filesystem"
-    transport: "stdio"
-    command: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/knowledge_base"]
-    roles: ["kb_read", "kb_write"]
+**Interacts with:** Frontend (routes user messages), Inference Engine Connector (triggers inference), Context Manager (sends completed context), Frontend (exposes status/results)
 
-  - name: "qdrant"
-    transport: "stdio"
-    command: ["python", "-m", "mcp_qdrant_server"]
-    env:
-      QDRANT_URL: "http://localhost:6333"
-    roles: ["kb_read"]
-```
+## Data Layer
 
-## Project Structure
+Single vector-capable database:
 
-```
-octave/
-├── AGENTS.md
-├── .agents/
-│   ├── rules/
-│   ├── context/
-│   ├── memory/
-│   └── skills/
-├── backend/
-│   ├── main.py
-│   ├── mcp/
-│   ├── context/
-│   └── reasoning/
-├── frontend/
-│   ├── package.json
-│   └── src/
-├── config/
-│   └── octave.yaml
-├── compose.yaml
-├── Dockerfile
-└── docs/
-```
+- **SQLite + vec0** (default) or **PostgreSQL + pgvector**
+- **Alembic** for schema migrations
+- Stores: MCP server configs, tool caches, context vault items with embeddings, conversation history, agent run results
+
+## Request Lifecycle
+
+1. User sends message via Chat Interface
+2. Frontend forwards to Backend over WebSocket
+3. Agent Manager routes to active agent (or spawns new)
+4. Context Manager assembles context (vault query, vector search, relevance scoring, token budget)
+5. Inference Engine Connector receives context bundle, runs prompt assembly, sends to LLM
+6. LLM responds; if tool use requested, MCP Connector resolves and executes tool
+7. Agent response streams back to Frontend
+8. Agent Manager sends completed run context to Context Manager for archival
+
+## Design Principles
+
+- **Local-first** — All data resides on-prem
+- **MCP as universal abstraction** — Every integration connects via MCP
+- **Pluggable components** — Engines, transports, databases are swappable
+- **Tag-driven wiring** — Tools, models, skills linked via tags, not hard-coded references
+
+## Architecture Diagrams
+
+- [System Architecture](../../docs/diagrams/system-architecture.md) — Component layout and interconnections
+- [Request Flow](../../docs/diagrams/request-flow.md) — End-to-end message lifecycle sequence
+- [Data Flow](../../docs/diagrams/data-flow.md) — Context, agent, and tool data paths + vault ER model

@@ -172,10 +172,10 @@ gh pr edit <PR_NUMBER> --body '## What
 
 ## Step 9: Mark PR Ready for Review
 
-Use `gh pr edit` to mark the draft PR as ready for review:
+Use `gh pr ready` to mark the draft PR as ready for review:
 
 ```bash
-gh pr edit <PR_NUMBER> --ready --repo Svagtlys/Octave
+gh pr ready <PR_NUMBER> --repo Svagtlys/Octave
 ```
 
 GitHub automation will move the linked issue from **In Progress** to **In Review**.

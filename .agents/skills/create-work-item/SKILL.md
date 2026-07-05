@@ -69,15 +69,43 @@ After rebasing, verify the bug still exists (or the feature is still needed) —
 
 ## Labels
 
-Apply exactly ONE primary label:
+Apply exactly ONE primary label AND exactly ONE component label per issue.
 
-| Label | Issue type |
-|-------|-----------|
-| `bug` | Something isn't working |
-| `enhancement` | New feature or request |
-| `documentation` | Docs only |
+### Primary Labels
 
-Add secondary labels when applicable: `good first issue`, `help wanted`.
+| Label | Color | Issue type |
+|-------|-------|-----------|
+| `bug` | #d73a4a | Something isn't working |
+| `enhancement` | #a2eeef | New feature or request |
+| `documentation` | #0075ca | Docs only |
+
+### Component Labels
+
+| Label | Color | Covers |
+|-------|-------|--------|
+| `area:backend` | #7057ff | Cross-cutting backend (foundation, CI, testing) |
+| `area:inference` | #e99695 | Inference Engine Connector |
+| `area:mcp` | #bf40bf | MCP Connector |
+| `area:context` | #0075ca | Context Manager |
+| `area:agent` | #c5def0 | Agent Manager |
+| `area:ui` | #fbca04 | Frontend views |
+| `area:db` | #2da44e | Database and migrations |
+
+### Secondary Labels (Optional)
+
+| Label | Color | Usage |
+|-------|-------|-------|
+| `good first issue` | #7057ff | Suitable for new contributors |
+| `help wanted` | #008672 | Extra attention is needed |
+
+### Other Available Labels
+
+| Label | Color | Usage |
+|-------|-------|-------|
+| `duplicate` | #cfd3d7 | This issue or PR already exists |
+| `invalid` | #e4e669 | This doesn't seem right |
+| `question` | #d876e3 | Further information is requested |
+| `wontfix` | #ffffff | This will not be worked on |
 
 ## Milestone
 

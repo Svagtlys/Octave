@@ -92,17 +92,30 @@ Closes #<ISSUE_NUMBER>
 - [ ] Documentation updated (if applicable)
 ```
 
-Use `gh pr create`:
+Use `gh pr create` with labels, milestone, and assignee from the issue:
 
 ```bash
+# Extract labels and milestone from the issue
+ISSUE_LABELS=$(gh issue view <ISSUE_NUMBER> --repo Svagtlys/Octave --json labels --jq '[.labels[].name] | join(",")')
+ISSUE_MILESTONE=$(gh issue view <ISSUE_NUMBER> --repo Svagtlys/Octave --json milestone --jq '.milestone.title // empty')
+
+# Build PR create command with metadata
 gh pr create \
   --repo Svagtlys/Octave \
   --base <target-branch> \
   --head <branch-name> \
   --title "<type>(main area of change): <issue title>" \
   --body "$(cat pr-body.md)" \
+  --label "$ISSUE_LABELS" \
+  --milestone "$ISSUE_MILESTONE" \
+  --assignee "@me" \
   --draft
 ```
+
+**Metadata propagation:**
+- **Labels:** Copy all labels from the source issue to the PR.
+- **Milestone:** Copy the milestone from the source issue (if set).
+- **Assignee:** Always assign `@me` (the authenticated user) to the PR.
 
 **Target branch** for the PR:
 

@@ -170,7 +170,33 @@ gh pr edit <PR_NUMBER> --body '## What
 
 **Note:** `gh pr edit` may show a deprecation warning for GitHub Projects (classic) — this is harmless and can be ignored. The PR body will still be updated successfully.
 
-## Step 9: Mark PR Ready for Review
+## Step 9: Verify PR Metadata (Labels, Milestone, Assignee)
+
+Double-check that the PR has the correct metadata propagated from the linked issue. Fix any gaps:
+
+```bash
+# Check current PR metadata
+gh pr view <PR_NUMBER> --repo Svagtlys/Octave --json labels,milestone,assignees
+
+# Get issue metadata for comparison
+gh issue view <ISSUE_NUMBER> --repo Svagtlys/Octave --json labels,milestone
+```
+
+If any metadata is missing, apply it:
+
+```bash
+ISSUE_LABELS=$(gh issue view <ISSUE_NUMBER> --repo Svagtlys/Octave --json labels --jq '[.labels[].name] | join(",")')
+ISSUE_MILESTONE=$(gh issue view <ISSUE_NUMBER> --repo Svagtlys/Octave --json milestone --jq '.milestone.title // empty')
+
+gh pr edit <PR_NUMBER> --repo Svagtlys/Octave \
+  --add-label "$ISSUE_LABELS" \
+  --milestone "$ISSUE_MILESTONE" \
+  --add-assignee "@me"
+```
+
+**Note:** `--add-label` and `--add-assignee` are additive (won't remove existing values). `--milestone` replaces the current milestone.
+
+## Step 10: Mark PR Ready for Review
 
 Use `gh pr ready` to mark the draft PR as ready for review:
 
@@ -180,7 +206,7 @@ gh pr ready <PR_NUMBER> --repo Svagtlys/Octave
 
 GitHub automation will move the linked issue from **In Progress** to **In Review**.
 
-## Step 10: Inform the User
+## Step 11: Inform the User
 
 ```
 Work item #<ISSUE_NUMBER> is ready for review.
@@ -214,8 +240,9 @@ finish-work-item (code mode)  ← YOU ARE HERE
     ├── Step 6: Stage remaining uncommitted work
     ├── Step 7: Push to origin
     ├── Step 8: Update PR description
-    ├── Step 9: Mark PR ready for review
-    └── Step 10: Inform user
+    ├── Step 9: Verify PR metadata (labels, milestone, assignee)
+    ├── Step 10: Mark PR ready for review
+    └── Step 11: Inform user
 ```
 
 ## Full Workflow Context

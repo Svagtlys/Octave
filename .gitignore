@@ -54,3 +54,13 @@ mypy_cache/
 *.swp
 *.swo
 *~
+
+# Backend Python artifacts
+backend/__pycache__/
+backend/.venv/
+backend/dist/
+backend/*.egg-info/
+backend/.pytest_cache/
+backend/.ruff_cache/
+backend/mypy_cache/
+backend/.mypy_cache/

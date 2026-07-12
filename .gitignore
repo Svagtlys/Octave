@@ -24,6 +24,7 @@ frontend/dist/
 frontend/.vite/
 frontend/playwright-report/
 frontend/test-results/
+frontend/tsconfig.tsbuildinfo
 
 # Stray root-level node installs
 /node_modules/

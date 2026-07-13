@@ -1,0 +1,31 @@
+name: Auto-unblock Ready Items
+
+on:
+  issues:
+    types: [closed]
+  workflow_dispatch:
+
+jobs:
+  unblock-dependents:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event.issue.pull_request == null
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install gh-milestone extension
+        run: gh extension install valeriobelli/gh-milestone
+
+      - name: Run unblock script
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x .agents/skills/discover-ready-work-items/unblock-ready-items.sh
+          .agents/skills/discover-ready-work-items/unblock-ready-items.sh > /tmp/unblock-report.md
+
+      - name: Publish report to workflow summary
+        run: cat /tmp/unblock-report.md >> $GITHUB_STEP_SUMMARY

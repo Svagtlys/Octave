@@ -4,7 +4,7 @@ import os
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Message
 from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
@@ -21,18 +21,36 @@ def add_cors(app: FastAPI) -> None:
     )
 
 
-async def log_request_middleware(request: Request, call_next: ASGIApp) -> JSONResponse:
-    start = time.perf_counter()
-    response = await call_next(request)
-    duration = time.perf_counter() - start
-    logger.info(
-        "%s %s %s %.3fs",
-        request.method,
-        request.url.path,
-        response.status_code,
-        duration,
-    )
-    return response
+class LogRequestMiddleware:
+    """Starlette middleware class for request logging."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        start = time.perf_counter()
+        request = Request(scope)
+        status_code = 200
+
+        async def send_with_logging(message: Message) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
+
+        await self.app(scope, receive, send_with_logging)
+        duration = time.perf_counter() - start
+        logger.info(
+            "%s %s %s %.3fs",
+            request.method,
+            request.url.path,
+            status_code,
+            duration,
+        )
 
 
 def add_error_handlers(app: FastAPI) -> None:

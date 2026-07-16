@@ -1,11 +1,14 @@
 import logging
-import time
 import os
+import time
+from collections.abc import Awaitable, Callable, MutableMapping
+from typing import Any
+
+from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message
-from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +30,12 @@ class LogRequestMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
 
-    async def __call__(self, scope, receive, send) -> None:
+    async def __call__(
+        self,
+        scope: MutableMapping[str, Any],
+        receive: Callable[[], Awaitable[MutableMapping[str, Any]]],
+        send: Callable[[MutableMapping[str, Any]], Awaitable[None]],
+    ) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return

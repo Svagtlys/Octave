@@ -14,6 +14,10 @@ RUN uv sync --frozen --no-install-project
 # Copy source code
 COPY src/ src/
 
+# Create non-root user
+RUN useradd --create-home octave
+USER octave
+
 # Expose port
 EXPOSE 8000
 

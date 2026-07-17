@@ -11,6 +11,9 @@ RUN npm ci
 # Copy source code
 COPY . .
 
+# Use built-in non-root user
+USER node
+
 # Expose port
 EXPOSE 5173
 

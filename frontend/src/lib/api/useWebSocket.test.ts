@@ -17,7 +17,7 @@ class MockWebSocket {
     this.url = url;
   }
 
-  send(_data: string) {}
+  send(_data: string): void {}
 
   close() {
     this.readyState = MockWebSocket.CLOSED;

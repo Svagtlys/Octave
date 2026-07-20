@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from octave.middleware import add_cors, add_error_handlers, LogRequestMiddleware
+from octave.middleware import LogRequestMiddleware, add_cors, add_error_handlers
 from octave.routes.health import router as health_router
 from octave.websocket.connection import router as ws_router
 

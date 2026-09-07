@@ -11,6 +11,12 @@ RUN npm ci
 # Copy source code
 COPY . .
 
+# Change ownership of app directory to node user
+RUN chown -R node:node /app
+
+# Use built-in non-root user
+USER node
+
 # Expose port
 EXPOSE 5173
 

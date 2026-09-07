@@ -8,11 +8,19 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # Copy dependency files for layer caching
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies
-RUN uv sync --frozen --no-install-project
-
 # Copy source code
 COPY src/ src/
+
+# Install dependencies and project
+RUN uv sync --frozen
+
+# Create non-root user
+RUN useradd --create-home octave
+
+# Change ownership of .venv to octave
+RUN chown -R octave:octave /app/.venv
+
+USER octave
 
 # Expose port
 EXPOSE 8000

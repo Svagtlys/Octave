@@ -1,6 +1,6 @@
 # Backend-Frontend Communication Layer — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Wire the REST API and WebSocket channel between the Octave React frontend and FastAPI backend, including non-root Docker configuration.
 
@@ -40,7 +40,7 @@
 **Files:**
 - Create: `backend/src/octave/middleware.py`
 
-- [ ] **Step 1: Create `middleware.py` with CORS, logging, and error handlers**
+- [x] **Step 1: Create `middleware.py` with CORS, logging, and error handlers**
 
 ```python
 import logging
@@ -96,7 +96,7 @@ def add_error_handlers(app: FastAPI) -> None:
         )
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add backend/src/octave/middleware.py
@@ -111,12 +111,12 @@ git commit -m "feat: add middleware module with CORS, logging, error handlers"
 - Create: `backend/src/octave/routes/__init__.py`
 - Create: `backend/src/octave/routes/health.py`
 
-- [ ] **Step 1: Create empty `routes/__init__.py`**
+- [x] **Step 1: Create empty `routes/__init__.py`**
 
 ```python
 ```
 
-- [ ] **Step 2: Create `routes/health.py` with health and version endpoints**
+- [x] **Step 2: Create `routes/health.py` with health and version endpoints**
 
 > **Note:** Route paths are relative (`/health`, `/version`). The `/api` prefix is applied when the router is included in `app.py` via `app.include_router(health_router, prefix="/api")`, producing final URLs `/api/health` and `/api/version`.
 
@@ -143,7 +143,7 @@ async def version() -> dict[str, str]:
     return {"version": v, "env": env}
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/src/octave/routes/
@@ -158,12 +158,12 @@ git commit -m "feat: add health and version route module"
 - Create: `backend/src/octave/websocket/__init__.py`
 - Create: `backend/src/octave/websocket/connection.py`
 
-- [ ] **Step 1: Create empty `websocket/__init__.py`**
+- [x] **Step 1: Create empty `websocket/__init__.py`**
 
 ```python
 ```
 
-- [ ] **Step 2: Create `websocket/connection.py` with echo WebSocket endpoint**
+- [x] **Step 2: Create `websocket/connection.py` with echo WebSocket endpoint**
 
 ```python
 import json
@@ -188,7 +188,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         await websocket.close()
 ```
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/src/octave/websocket/
@@ -202,7 +202,7 @@ git commit -m "feat: add WebSocket echo endpoint module"
 **Files:**
 - Modify: `backend/src/octave/app.py`
 
-- [ ] **Step 1: Rewrite `app.py` to wire middleware, routes, and WebSocket**
+- [x] **Step 1: Rewrite `app.py` to wire middleware, routes, and WebSocket**
 
 > **Note:** `prefix="/api"` on `include_router` prepends `/api` to all route paths defined in `health.py`, so `/health` becomes `/api/health`.
 
@@ -225,7 +225,7 @@ app.include_router(health_router, prefix="/api")
 app.include_router(ws_router)
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add backend/src/octave/app.py
@@ -239,7 +239,7 @@ git commit -m "feat: wire middleware, routes, and WebSocket in app factory"
 **Files:**
 - Modify: `backend/tests/test_health.py`
 
-- [ ] **Step 1: Update existing health test to use `/api/health` path**
+- [x] **Step 1: Update existing health test to use `/api/health` path**
 
 ```python
 import pytest
@@ -258,12 +258,12 @@ async def test_health_endpoint_returns_ok() -> None:
     assert response.json() == {"status": "ok"}
 ```
 
-- [ ] **Step 2: Run the test to verify it passes**
+- [x] **Step 2: Run the test to verify it passes**
 
 Run: `cd backend && uv run pytest tests/test_health.py -v`
 Expected: PASS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/tests/test_health.py
@@ -277,7 +277,7 @@ git commit -m "fix: update health test to use /api/health path"
 **Files:**
 - Create: `backend/tests/test_version.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 import pytest
@@ -300,12 +300,12 @@ async def test_version_endpoint_returns_version() -> None:
     assert isinstance(data["env"], str)
 ```
 
-- [ ] **Step 2: Run test to verify it passes**
+- [x] **Step 2: Run test to verify it passes**
 
 Run: `cd backend && uv run pytest tests/test_version.py -v`
 Expected: PASS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/tests/test_version.py
@@ -319,7 +319,7 @@ git commit -m "test: add version endpoint test"
 **Files:**
 - Create: `backend/tests/test_cors.py`
 
-- [ ] **Step 1: Write the CORS headers test**
+- [x] **Step 1: Write the CORS headers test**
 
 ```python
 import pytest
@@ -341,12 +341,12 @@ async def test_cors_headers_present() -> None:
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
 ```
 
-- [ ] **Step 2: Run test to verify it passes**
+- [x] **Step 2: Run test to verify it passes**
 
 Run: `cd backend && uv run pytest tests/test_cors.py -v`
 Expected: PASS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/tests/test_cors.py
@@ -360,7 +360,7 @@ git commit -m "test: add CORS headers test"
 **Files:**
 - Create: `backend/tests/test_error_handling.py`
 
-- [ ] **Step 1: Write the error handling tests**
+- [x] **Step 1: Write the error handling tests**
 
 ```python
 import pytest
@@ -381,12 +381,12 @@ async def test_404_returns_json_error() -> None:
     assert "detail" in data
 ```
 
-- [ ] **Step 2: Run test to verify it passes**
+- [x] **Step 2: Run test to verify it passes**
 
 Run: `cd backend && uv run pytest tests/test_error_handling.py -v`
 Expected: PASS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/tests/test_error_handling.py
@@ -400,7 +400,7 @@ git commit -m "test: add error handling JSON format test"
 **Files:**
 - Create: `backend/tests/test_websocket.py`
 
-- [ ] **Step 1: Write the WebSocket echo test**
+- [x] **Step 1: Write the WebSocket echo test**
 
 ```python
 import json
@@ -423,12 +423,12 @@ async def test_websocket_echo() -> None:
     assert response["payload"] == "hello"
 ```
 
-- [ ] **Step 2: Run test to verify it passes**
+- [x] **Step 2: Run test to verify it passes**
 
 Run: `cd backend && uv run pytest tests/test_websocket.py -v`
 Expected: PASS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/tests/test_websocket.py
@@ -441,17 +441,17 @@ git commit -m "test: add WebSocket echo test"
 
 **Files:** (none — verification step)
 
-- [ ] **Step 1: Run all backend tests**
+- [x] **Step 1: Run all backend tests**
 
 Run: `cd backend && uv run pytest -v`
 Expected: All tests PASS
 
-- [ ] **Step 2: Run linter**
+- [x] **Step 2: Run linter**
 
 Run: `cd backend && uv run ruff check src/ tests/`
 Expected: No lint errors
 
-- [ ] **Step 3: Run type checker**
+- [x] **Step 3: Run type checker**
 
 Run: `cd backend && uv run mypy src/octave/`
 Expected: No type errors
@@ -463,7 +463,7 @@ Expected: No type errors
 **Files:**
 - Create: `frontend/src/lib/api/client.ts`
 
-- [ ] **Step 1: Create the API client module**
+- [x] **Step 1: Create the API client module**
 
 ```typescript
 export class ApiError extends Error {
@@ -531,7 +531,7 @@ export async function fetchVersion(): Promise<VersionResponse> {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add frontend/src/lib/api/client.ts
@@ -545,7 +545,7 @@ git commit -m "feat: add API client with fetch wrapper and typed functions"
 **Files:**
 - Create: `frontend/src/lib/api/client.test.ts`
 
-- [ ] **Step 1: Write the API client tests**
+- [x] **Step 1: Write the API client tests**
 
 ```typescript
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -617,12 +617,12 @@ describe("API client", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they pass**
+- [x] **Step 2: Run tests to verify they pass**
 
 Run: `cd frontend && npm run test -- src/lib/api/client.test.ts`
 Expected: PASS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add frontend/src/lib/api/client.test.ts
@@ -636,7 +636,7 @@ git commit -m "test: add API client unit tests"
 **Files:**
 - Create: `frontend/src/lib/api/useWebSocket.ts`
 
-- [ ] **Step 1: Create the WebSocket hook**
+- [x] **Step 1: Create the WebSocket hook**
 
 ```typescript
 import { useState, useRef, useCallback, useEffect } from "react";
@@ -717,7 +717,7 @@ export function useWebSocket(url?: string): UseWebSocketReturn {
 }
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add frontend/src/lib/api/useWebSocket.ts
@@ -731,7 +731,7 @@ git commit -m "feat: add WebSocket hook with reconnect and exponential backoff"
 **Files:**
 - Create: `frontend/src/lib/api/useWebSocket.test.ts`
 
-- [ ] **Step 1: Write the WebSocket hook tests**
+- [x] **Step 1: Write the WebSocket hook tests**
 
 ```typescript
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
@@ -797,12 +797,12 @@ describe("useWebSocket", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they pass**
+- [x] **Step 2: Run tests to verify they pass**
 
 Run: `cd frontend && npm run test -- src/lib/api/useWebSocket.test.ts`
 Expected: PASS
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add frontend/src/lib/api/useWebSocket.test.ts
@@ -815,17 +815,17 @@ git commit -m "test: add WebSocket hook unit tests"
 
 **Files:** (none — verification step)
 
-- [ ] **Step 1: Run all frontend tests**
+- [x] **Step 1: Run all frontend tests**
 
 Run: `cd frontend && npm run test`
 Expected: All tests PASS
 
-- [ ] **Step 2: Run linter**
+- [x] **Step 2: Run linter**
 
 Run: `cd frontend && npm run lint`
 Expected: No lint errors
 
-- [ ] **Step 3: Run TypeScript check**
+- [x] **Step 3: Run TypeScript check**
 
 Run: `cd frontend && npx tsc --noEmit`
 Expected: No type errors
@@ -837,7 +837,7 @@ Expected: No type errors
 **Files:**
 - Modify: `backend/Dockerfile`
 
-- [ ] **Step 1: Add non-root user to backend Dockerfile**
+- [x] **Step 1: Add non-root user to backend Dockerfile**
 
 Add before the `CMD` line:
 ```dockerfile
@@ -875,7 +875,7 @@ EXPOSE 8000
 CMD ["uv", "run", "uvicorn", "octave.app:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add backend/Dockerfile
@@ -889,7 +889,7 @@ git commit -m "chore: run backend container as non-root user"
 **Files:**
 - Modify: `frontend/Dockerfile`
 
-- [ ] **Step 1: Add non-root user to frontend Dockerfile**
+- [x] **Step 1: Add non-root user to frontend Dockerfile**
 
 Add before the `CMD` line:
 ```dockerfile
@@ -922,7 +922,7 @@ EXPOSE 5173
 CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add frontend/Dockerfile
@@ -935,27 +935,27 @@ git commit -m "chore: run frontend container as non-root user"
 
 **Files:** (none — verification step)
 
-- [ ] **Step 1: Run all backend tests**
+- [x] **Step 1: Run all backend tests**
 
 Run: `cd backend && uv run pytest -v`
 Expected: All tests PASS
 
-- [ ] **Step 2: Run all frontend tests**
+- [x] **Step 2: Run all frontend tests**
 
 Run: `cd frontend && npm run test`
 Expected: All tests PASS
 
-- [ ] **Step 3: Verify Docker build**
+- [x] **Step 3: Verify Docker build**
 
 Run: `docker compose build`
 Expected: Both images build successfully
 
-- [ ] **Step 4: Verify non-root user in containers**
+- [x] **Step 4: Verify non-root user in containers**
 
 Run: `docker compose up -d && docker exec $(docker compose ps -q backend) whoami && docker exec $(docker compose ps -q frontend) whoami`
 Expected: `octave` for backend, `node` for frontend
 
-- [ ] **Step 5: Stop containers**
+- [x] **Step 5: Stop containers**
 
 Run: `docker compose down`
 

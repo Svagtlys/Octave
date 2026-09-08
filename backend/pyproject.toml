@@ -5,6 +5,8 @@ description = "Octave backend service"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
+    "openai>=2.0.0",
+    "pydantic-settings>=2.0.0",
     "uvicorn[standard]>=0.34.0",
 ]
 

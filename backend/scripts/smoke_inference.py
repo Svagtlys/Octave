@@ -44,7 +44,8 @@ async def run(prompt: str, *, stream: bool) -> int:
         model = config.default_model or (models[0].id if models else None)
         if model is None:
             print(
-                "\u2717 engine serves no models and OCTAVE_INFERENCE_DEFAULT_MODEL is unset",
+                "\u2717 engine serves no models and "
+                "OCTAVE_INFERENCE_DEFAULT_MODEL is unset",
                 file=sys.stderr,
             )
             return 1
@@ -61,8 +62,11 @@ async def run(prompt: str, *, stream: bool) -> int:
         else:
             result = await adapter.complete(request)
             print(result.text)
-            print(f"\n\u2713 finish_reason={result.finish_reason!r} model={result.model!r}")
-        return 0
+            print(
+                f"\n\u2713 finish_reason={result.finish_reason!r} "
+                f"model={result.model!r}"
+            )
+            return 0
     except AdapterError as exc:
         print(f"\n\u2717 {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1

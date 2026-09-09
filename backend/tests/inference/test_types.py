@@ -13,7 +13,9 @@ from octave.inference.types import (
 
 
 def test_completion_request_defaults() -> None:
-    request = CompletionRequest(model=None, messages=[Message(role="user", content="hi")])
+    request = CompletionRequest(
+        model=None, messages=[Message(role="user", content="hi")]
+    )
     assert request.model is None
     assert request.temperature is None
     assert request.max_tokens is None

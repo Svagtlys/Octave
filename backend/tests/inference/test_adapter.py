@@ -26,7 +26,9 @@ class _Stub(InferenceAdapter):
     async def complete(self, request: CompletionRequest) -> CompletionResult:
         return CompletionResult(text="", model="stub")
 
-    async def stream(self, request: CompletionRequest) -> AsyncIterator[CompletionChunk]:
+    async def stream(
+        self, request: CompletionRequest
+    ) -> AsyncIterator[CompletionChunk]:
         yield CompletionChunk()
 
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResult:

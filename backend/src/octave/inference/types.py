@@ -39,7 +39,10 @@ class Usage(BaseModel):
 
 
 class CompletionRequest(BaseModel):
-    """Request for a chat completion. ``model=None`` resolves to the configured default."""
+    """Request for a chat completion.
+
+    ``model=None`` resolves to the configured default.
+    """
 
     model: str | None = None
     messages: list[Message]

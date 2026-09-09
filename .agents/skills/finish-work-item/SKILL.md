@@ -12,7 +12,7 @@ modeSlugs:
 
 ## Overview
 
-Verify tests pass, lint is clean, all plan tasks are accounted for in commits, and the branch is pushed and ready for review.
+Verify tests pass, lint is clean, documentation matches the change, all plan tasks are accounted for in commits, and the branch is pushed and ready for review.
 
 **This skill MUST run in code mode** (to execute verification and git commands). It is invoked after implementation completes (via subagent-driven-development or executing-plans).
 
@@ -60,6 +60,32 @@ If frontend files changed:
 ```
 
 **If build fails:** Stop and inform the user.
+
+## Step 3.5: Verify Documentation Is Up to Date
+
+Plans routinely omit documentation tasks, so do not trust the plan's task list as the
+doc checklist — derive the requirement from the diff.
+
+Scan the branch diff for user-visible changes:
+
+```bash
+git diff origin/develop...HEAD | grep -nE "^\+.*(env_prefix|OCTAVE_[A-Z_]+|BaseSettings|APIRouter|add_api_route|class .*Adapter|__all__)"
+```
+
+**If a trigger matched, confirm the corresponding doc changed in the same branch**
+(`git diff --name-only origin/develop...HEAD`):
+
+| Diff contains | Doc that must be updated |
+|---|---|
+| New/renamed env var or settings field | `docs/DEVELOPMENT.md` → Environment Configuration |
+| New component, package, or integration boundary | `docs/ARCHITECTURE.md` |
+| Changed dev workflow, commands, or project layout | `docs/DEVELOPMENT.md` |
+| Feature status change | `docs/TODO.md` |
+
+**If a doc is stale:** update it and commit before marking the PR ready. A doc gap
+blocks review just like a lint error does — the env vars in this repo's inference
+layer shipped undocumented once for exactly this reason (the plan only listed
+`ARCHITECTURE.md`).
 
 ## Step 4: Load the Implementation Plan
 
@@ -206,6 +232,36 @@ gh pr ready <PR_NUMBER> --repo Svagtlys/Octave
 
 GitHub automation will move the linked issue from **In Progress** to **In Review**.
 
+## Step 10.5: Remind the User About Merge Settings
+
+Before marking the PR ready, verify the PR base branch is correct and remind the user of the merge strategy:
+
+### Verify PR Base Branch
+
+| Branch prefix | Correct PR target |
+|---|---|
+| `feature/*`, `docs/*`, `chore/*` | `develop` |
+| `fix/*` | `release/x.y` (or `develop` if no release branch exists yet) |
+| `hotfix/*` | `main` |
+
+If the base branch is wrong, fix it:
+```bash
+gh pr edit <PR_NUMBER> --base <correct-target> --repo Svagtlys/Octave
+```
+
+### Remind the User of the Merge Strategy
+
+When the PR is approved and ready to merge, the merge strategy depends on the PR type:
+
+| PR type | Merge strategy | Reason |
+|---|---|---|
+| Feature / chore / docs → `develop` | **Squash and merge** | Keeps `develop` history clean and linear |
+| Fix → `release/x.y` or `develop` | **Squash and merge** | Single atomic fix in history |
+| Hotfix → `main` | **Create a merge commit** | Preserves traceability for production changes |
+| Release (`develop` → `main`) | **Create a merge commit** | Preserves the merge boundary for traceability (equivalent to `--no-ff`) |
+
+Tell the user explicitly which strategy to use when merging.
+
 ## Step 11: Inform the User
 
 ```
@@ -225,6 +281,10 @@ Commits:
 - <commit 2: message>
 
 Plan tasks accounted for: <X>/<X>
+
+Merge settings when approved:
+- Base branch: <develop/main/release/x.y>
+- Merge strategy: <Squash and merge | Create a merge commit>
 ```
 
 ## Flow Diagram
@@ -234,6 +294,7 @@ finish-work-item (code mode)  ← YOU ARE HERE
     ├── Step 1: Run pytest (STOP if failing)
     ├── Step 2: Run ruff lint (fix if errors)
     ├── Step 3: Verify frontend build (if applicable)
+    ├── Step 3.5: Verify documentation matches the diff
     ├── Step 4: Load implementation plan
     ├── Step 5: Audit commits against plan
     │   └── Ensure conventional commit messages
@@ -242,7 +303,8 @@ finish-work-item (code mode)  ← YOU ARE HERE
     ├── Step 8: Update PR description
     ├── Step 9: Verify PR metadata (labels, milestone, assignee)
     ├── Step 10: Mark PR ready for review
-    └── Step 11: Inform user
+    ├── Step 10.5: Verify PR base branch + remind merge strategy
+    └── Step 11: Inform user (including merge settings)
 ```
 
 ## Full Workflow Context
@@ -272,10 +334,13 @@ finish-work-item (code mode)  ← YOU ARE HERE
 
 - **Merging without running tests** — Always run `backend/.venv/bin/pytest` first.
 - **Squashing commits in this skill** — Squashing is a merge-time decision. This skill ensures commits are clean but does not squash.
+- **Wrong PR base branch** — Feature/chore/docs PRs must target `develop`, not `main`. Only hotfix and release PRs target `main`.
+- **Wrong merge strategy** — Use squash for features merging into `develop`. Use merge commit for release PRs (`develop` → `main`) and hotfixes into `main`.
 - **Wrong commit type** — Map branch prefix to conventional commit type correctly.
 - **Skipping the venv prefix** — Always use `backend/.venv/bin/` for Python commands.
 - **Creating a new PR** — The draft PR already exists from `start-work-item`. Edit it, don't create a new one.
 - **Forgetting frontend build check** — If frontend files changed, verify `npm run build`.
+- **Trusting the plan's doc list** — Plans frequently omit documentation tasks. Derive the doc checklist from the diff (Step 3.5), not from the plan.
 - **Ignoring plan-task coverage** — Every plan task must have corresponding commits.
 
 ## Red Flags
@@ -285,9 +350,14 @@ finish-work-item (code mode)  ← YOU ARE HERE
 - Squash commits in this skill (squash happens at merge time)
 - Force-push without `--force-with-lease`
 - Skip conventional commit format
+- Target `main` with a feature PR (must go to `develop`)
+- Squash-merge a release PR or hotfix into `main` (use merge commit for traceability)
 
 **Always:**
 - Verify tests before touching merge
 - Use `backend/.venv/bin/` prefix for Python commands
 - Audit commits against the implementation plan
+- Verify documentation reflects the branch diff before marking ready
+- Verify the PR base branch matches the branch prefix rules
+- Remind the user of the correct merge strategy (squash vs. merge commit)
 - Mark PR ready (don't merge directly without review unless explicitly told)

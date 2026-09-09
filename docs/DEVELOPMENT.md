@@ -158,6 +158,32 @@ PORT=8000
 
 > **Note:** `.env` files are in `.gitignore` and never committed.
 
+#### Inference Adapter
+
+The inference layer (`octave.inference`) reads `OCTAVE_INFERENCE_*` variables,
+via `InferenceSettings` in `backend/src/octave/inference/config.py`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `OCTAVE_INFERENCE_ADAPTER` | `openai` | Registered adapter name, or a `module.path:ClassName` import string for a third-party adapter package |
+| `OCTAVE_INFERENCE_BASE_URL` | `http://localhost:11434/v1` | OpenAI-compatible engine endpoint (Ollama, vLLM, llama.cpp server, LM Studio, …) |
+| `OCTAVE_INFERENCE_API_KEY` | *(empty)* | Bearer token; optional for local engines. Secret — never logged (redacted `***`) |
+| `OCTAVE_INFERENCE_DEFAULT_MODEL` | *(unset)* | Model used when a request doesn't specify one |
+| `OCTAVE_INFERENCE_TIMEOUT_SECONDS` | `120.0` | Per-request timeout |
+| `OCTAVE_INFERENCE_MAX_RETRIES` | `2` | SDK-level retries on transient failures |
+
+**HTTPS engines behind an internal CA:** if the engine uses a certificate from
+a private CA, httpx (certifi bundle) will fail the handshake with a generic
+connection error even though `curl` succeeds. Point it at the system trust
+store:
+
+```env
+SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+```
+
+This *adds* to certifi's bundle rather than replacing it, so public HTTPS
+endpoints keep working. Verify any setup with `backend/scripts/smoke_inference.py`.
+
 ### Frontend Environment
 
 The frontend uses Vite's environment variable convention. Create `frontend/.env` for local development:

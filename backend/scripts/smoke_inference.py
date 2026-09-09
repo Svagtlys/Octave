@@ -10,6 +10,11 @@ Usage (from backend/):
 Reads the same OCTAVE_INFERENCE_* env vars the app uses (via
 InferenceSettings), lists models, sends the prompt, prints the reply.
 Exits non-zero on any AdapterError. Not part of the test suite.
+
+HTTPS engines behind an internal CA may fail with a bare
+"AdapterConnectionError: Connection error." while curl succeeds: httpx
+trusts certifi's bundle, not the system store. Point it at the system
+bundle to fix: SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 """
 
 import argparse

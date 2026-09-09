@@ -49,6 +49,15 @@ Manages communication with external or local LLM inference engines via a pluggab
 - Receives agent turn triggers from the **Agent Manager**
 - Requests tool invocations through the **MCP Connector** when the LLM outputs tool calls
 
+**Implemented — adapter contract (issue #8):** the `octave.inference` package exposes the
+`InferenceAdapter` ABC (`complete`, `stream`, `embed`, `list_models`), an `AdapterRegistry`
+resolving adapters by name or `module.path:ClassName` import string, env-backed
+`AdapterConfig`, and a built-in `OpenAIAdapter` for OpenAI-dialect servers (Ollama, vLLM,
+llama.cpp server, LM Studio). The `openai` SDK is quarantined to `openai_adapter.py`; SDK
+errors translate to Octave types. All adapters — including third-party plugins — are gated
+by a shared conformance test suite. Design:
+[`.agents/specs/2026-09-08-inference-adapter-interface-design.md`](../.agents/specs/2026-09-08-inference-adapter-interface-design.md).
+
 ---
 
 ### MCP Connector

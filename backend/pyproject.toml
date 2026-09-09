@@ -5,6 +5,10 @@ description = "Octave backend service"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
+    # <3.0: SDK 3.x switched its wire layer to the `httpx2` fork, breaking the
+    # injected-httpx-client test seam the adapter relies on.
+    "openai>=2.0.0,<3.0.0",
+    "pydantic-settings>=2.0.0",
     "uvicorn[standard]>=0.34.0",
 ]
 

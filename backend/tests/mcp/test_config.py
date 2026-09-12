@@ -1,7 +1,8 @@
 """Frozen server configs + env-backed global defaults."""
 
-import pytest
 from dataclasses import FrozenInstanceError
+
+import pytest
 
 from octave.mcp.config import HttpConfig, McpSettings, StdioConfig
 
@@ -26,7 +27,9 @@ def test_stdio_repr_redacts_env_values() -> None:
 
 
 def test_http_repr_redacts_header_values() -> None:
-    config = HttpConfig(url="https://x.example/mcp", headers={"Authorization": "Bearer t0ken"})
+    config = HttpConfig(
+        url="https://x.example/mcp", headers={"Authorization": "Bearer t0ken"}
+    )
     text = repr(config)
     assert "t0ken" not in text
     assert "Bearer" not in text

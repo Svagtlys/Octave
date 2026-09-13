@@ -5,6 +5,11 @@ description = "Octave backend service"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115.0",
+    # Spike in Task 1 Step 3 pins the resolved version; the SDK moves fast and
+    # streamablehttp_client + memory-stream test helpers must exist.
+    # <2.0.0: SDK 2.x renamed streamablehttp_client and moved its wire layer to
+    # the httpx2 fork; this plan targets the 1.x API.
+    "mcp>=1.30.0,<2.0.0",
     # <3.0: SDK 3.x switched its wire layer to the `httpx2` fork, breaking the
     # injected-httpx-client test seam the adapter relies on.
     "openai>=2.0.0,<3.0.0",

@@ -65,8 +65,8 @@ by a shared conformance test suite. Design:
 Implements the Model Context Protocol client, enabling Octave to discover, manage, and invoke tools across pluggable MCP servers.
 
 **Responsibilities:**
-- **JSON-RPC 2.0 Client Core** — Transport-agnostic RPC layer
-- **Transport Support** — stdio (subprocess) and HTTP/SSE (remote) transports
+- **JSON-RPC 2.0 Client Core** — Typed `McpClient` façade (`octave.mcp`) over the official `mcp` Python SDK: framing, request-ID correlation, initialize handshake, error translation
+- **Transport Support** — stdio (subprocess) and Streamable HTTP behind `open_transport`; legacy SSE deliberately not wrapped
 - **Server Lifecycle Manager** — Start, stop, restart, and health-monitor connected MCP servers
 - **Tool Discovery & Caching** — Fetches tool schemas and descriptions from servers; caches for fast lookup
 - **Tool Execution Engine** — Invokes tools with arguments, handles responses and errors, enforces timeouts

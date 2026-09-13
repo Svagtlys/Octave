@@ -104,7 +104,11 @@ class Peer:
         """Push a raw server→client JSON-RPC notification."""
         await self.swrite.send(
             SessionMessage(
-                JSONRPCMessage(root=JSONRPCNotification(method=method, params=params))
+                JSONRPCMessage(
+                    root=JSONRPCNotification(
+                        jsonrpc="2.0", method=method, params=params
+                    )
+                )
             )
         )
 
@@ -115,7 +119,9 @@ class Peer:
         await self.swrite.send(
             SessionMessage(
                 JSONRPCMessage(
-                    root=JSONRPCRequest(method=method, params=params or {}, id=42)
+                    root=JSONRPCRequest(
+                        jsonrpc="2.0", method=method, params=params or {}, id=42
+                    )
                 )
             )
         )

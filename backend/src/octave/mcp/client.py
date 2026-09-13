@@ -5,12 +5,17 @@ requests, results, and the boundary where SDK exceptions are translated to
 ``octave.mcp.errors``. SDK types never appear in public signatures.
 """
 
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from typing import Any, cast
 
 import anyio
+from anyio.streams.memory import (
+    MemoryObjectReceiveStream,
+    MemoryObjectSendStream,
+)
 from mcp import ClientSession
+from mcp.client.session import MessageHandlerFnT
 from mcp.shared.exceptions import McpError as SdkMcpError
 from mcp.types import ClientNotification, ClientRequest
 from mcp.types import TextContent as SdkTextContent
@@ -25,7 +30,13 @@ from octave.mcp.errors import (
     McpTimeoutError,
 )
 from octave.mcp.transport import TransportStreams, open_transport
-from octave.mcp.types import ServerInfo, ToolContent, ToolInfo, ToolResult
+from octave.mcp.types import (
+    Notification,
+    ServerInfo,
+    ToolContent,
+    ToolInfo,
+    ToolResult,
+)
 
 __all__ = ["McpClient"]
 
@@ -77,6 +88,7 @@ class McpClient:
         self._stack: AsyncExitStack | None = None
         self._session: ClientSession | None = None
         self._server_info: ServerInfo | None = None
+        self._notification_senders: list[MemoryObjectSendStream[Notification]] = []
 
     async def connect(self, config: ServerConfig) -> None:
         """Open transport + session and run the MCP initialize handshake."""
@@ -86,7 +98,13 @@ class McpClient:
         try:
             streams = await stack.enter_async_context(self._transport_factory(config))
             session = await stack.enter_async_context(
-                ClientSession(streams.read, streams.write)
+                ClientSession(
+                    streams.read,
+                    streams.write,
+                    # ``*args`` absorbs both SDK handler conventions, so it
+                    # can't structurally match the two-arg Protocol — cast.
+                    message_handler=cast(MessageHandlerFnT, self._on_inbound_message),
+                )
             )
             with anyio.fail_after(self._settings.request_timeout_seconds):
                 init = await session.initialize()
@@ -192,6 +210,66 @@ class McpClient:
             method,
             session.send_notification(cast(ClientNotification, message)),
         )
+
+    def subscribe_notifications(self) -> AsyncIterator[Notification]:
+        """A private stream of inbound server→client notifications.
+
+        Registration happens at call time (not first ``__anext__``) so a
+        notification sent immediately after subscribing is buffered, not
+        dropped. Close the returned iterator when done.
+        """
+        send, receive = anyio.create_memory_object_stream[Notification](
+            max_buffer_size=100
+        )
+        self._notification_senders.append(send)
+        return self._drain_notifications(receive, send)
+
+    async def _drain_notifications(
+        self,
+        receive: MemoryObjectReceiveStream[Notification],
+        send: MemoryObjectSendStream[Notification],
+    ) -> AsyncIterator[Notification]:
+        try:
+            async for notification in receive:
+                yield notification
+        finally:
+            if send in self._notification_senders:
+                self._notification_senders.remove(send)
+            await send.aclose()
+            await receive.aclose()
+
+    async def _on_inbound_message(self, *args: Any) -> None:
+        """``ClientSession`` message_handler: fan notifications to subscribers.
+
+        ``*args`` absorbs both SDK call conventions — the current
+        ``(context, message)`` and the older ``(message)`` — the message is
+        always the last positional argument. Inbound server→client *requests*
+        never reach here answered: the SDK answers them itself unless a
+        callback is registered — the seam where a request-handler registry
+        plugs in later (design decision 4).
+        """
+        message = args[-1]
+        root = getattr(message, "root", message)
+        method = getattr(root, "method", None)
+        if not isinstance(method, str):
+            return  # not a notification — nothing to fan out
+        raw_params = getattr(root, "params", None)
+        if raw_params is not None and hasattr(raw_params, "model_dump"):
+            params = dict(
+                raw_params.model_dump(
+                    by_alias=True, mode="json", exclude_none=True
+                )
+            )
+        else:
+            params = dict(getattr(raw_params, "root", raw_params) or {})
+        for send in list(self._notification_senders):
+            try:
+                send.send_nowait(Notification(method=method, params=params))
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                # Subscriber went away; drop it silently.
+                self._notification_senders.remove(send)
+            except anyio.WouldBlock:
+                pass  # subscriber buffer full — drop the notification
 
     def _require_session(self, operation: str) -> ClientSession:
         if self._session is None:

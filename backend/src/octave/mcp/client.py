@@ -11,11 +11,19 @@ from typing import Any
 
 import anyio
 from mcp import ClientSession
+from mcp.shared.exceptions import McpError as SdkMcpError
+from mcp.types import TextContent as SdkTextContent
 
 from octave.mcp.config import McpSettings, ServerConfig
-from octave.mcp.errors import McpError, McpNotConnectedError, McpTimeoutError
+from octave.mcp.errors import (
+    McpConnectionError,
+    McpError,
+    McpNotConnectedError,
+    McpRpcError,
+    McpTimeoutError,
+)
 from octave.mcp.transport import TransportStreams, open_transport
-from octave.mcp.types import ServerInfo
+from octave.mcp.types import ServerInfo, ToolContent, ToolInfo, ToolResult
 
 __all__ = ["McpClient"]
 
@@ -64,6 +72,9 @@ class McpClient:
                 f"initialize handshake timed out after "
                 f"{self._settings.request_timeout_seconds}s"
             ) from exc
+        except (FileNotFoundError, PermissionError) as exc:
+            await stack.aclose()
+            raise McpConnectionError(f"Could not spawn server process: {exc}") from exc
         except Exception:
             # Config, transport, or handshake failure — unwind the stack
             # before re-raising so a half-open connection never leaks.
@@ -101,6 +112,35 @@ class McpClient:
         await self._run("ping", session.send_ping())
         return True
 
+    async def list_tools(self) -> list[ToolInfo]:
+        """Tools advertised by the server, mapped to Octave types."""
+        session = self._require_session("list_tools")
+        result = await self._run("list_tools", session.list_tools())
+        return [
+            ToolInfo(
+                name=tool.name,
+                description=tool.description,
+                input_schema=dict(tool.inputSchema),
+            )
+            for tool in result.tools
+        ]
+
+    async def call_tool(
+        self, name: str, arguments: dict[str, Any] | None = None
+    ) -> ToolResult:
+        """Invoke a tool. MCP-level tool failure comes back as
+        ``ToolResult(is_error=True)``; a JSON-RPC error raises ``McpRpcError``.
+        Non-text content blocks are skipped (deferred — see spec follow-ups)."""
+        session = self._require_session("call_tool")
+        result = await self._run(
+            f"call_tool({name})", session.call_tool(name, arguments=arguments or {})
+        )
+        content: list[ToolContent] = []
+        for block in result.content:
+            if isinstance(block, SdkTextContent):
+                content.append(ToolContent(kind="text", text=block.text))
+        return ToolResult(content=content, is_error=bool(result.isError))
+
     def _require_session(self, operation: str) -> ClientSession:
         if self._session is None:
             raise McpNotConnectedError(f"cannot {operation}: not connected")
@@ -109,8 +149,9 @@ class McpClient:
     async def _run(self, operation: str, awaitable: Awaitable[Any]) -> Any:
         """Await ``awaitable`` under the request timeout; translate failures.
 
-        Error translation grows here in Tasks 7–8 as each SDK failure mode
-        gains its first test.
+        An SDK ``McpError`` (a JSON-RPC error response on the wire) becomes
+        ``McpRpcError`` carrying the code verbatim; timeout becomes
+        ``McpTimeoutError``. Callers only ever catch Octave types.
         """
         try:
             with anyio.fail_after(self._settings.request_timeout_seconds):
@@ -118,4 +159,8 @@ class McpClient:
         except TimeoutError as exc:
             raise McpTimeoutError(
                 f"{operation} timed out after {self._settings.request_timeout_seconds}s"
+            ) from exc
+        except SdkMcpError as exc:
+            raise McpRpcError(
+                exc.error.message, code=exc.error.code, data=exc.error.data
             ) from exc

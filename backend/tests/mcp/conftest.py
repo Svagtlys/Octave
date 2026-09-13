@@ -23,10 +23,13 @@ from mcp.shared.exceptions import McpError as SdkMcpError
 from mcp.shared.memory import create_client_server_memory_streams
 from mcp.shared.message import SessionMessage
 from mcp.types import (
+    CallToolRequest,
+    CallToolResult,
     ErrorData,
     JSONRPCMessage,
     JSONRPCNotification,
     JSONRPCRequest,
+    ServerResult,
     TextContent,
     Tool,
 )
@@ -59,19 +62,33 @@ def build_server() -> Server:
             Tool(name=n, description=n, inputSchema=dict(_SCHEMA)) for n in _TOOL_NAMES
         ]
 
-    @server.call_tool()
-    async def _call(name: str, arguments: dict[str, Any]) -> Any:
+    # Registered as a raw request handler rather than via @server.call_tool():
+    # SDK 1.30's decorator swallows exceptions raised by the handler into an
+    # isError=True CallToolResult (lowlevel/server.py:589), so an SdkMcpError
+    # raised inside a decorated handler never reaches the dispatcher that
+    # converts it to a JSON-RPC error response (lowlevel/server.py:777).
+    async def _raw_call_tool(req: CallToolRequest) -> ServerResult:
+        name = req.params.name
+        arguments = req.params.arguments or {}
         if name == "echo":
-            return [TextContent(type="text", text=str(arguments.get("text", "")))]
+            text = str(arguments.get("text", ""))
+            content = [TextContent(type="text", text=text)]
+            return ServerResult(CallToolResult(content=content))
         if name == "slow":
             await anyio.sleep(30)
-            return [TextContent(type="text", text="too late")]
+            return ServerResult(
+                CallToolResult(content=[TextContent(type="text", text="too late")])
+            )
         if name == "tool_error":
-            return {
-                "content": [{"type": "text", "text": "tool failed"}],
-                "isError": True,
-            }
+            return ServerResult(
+                CallToolResult(
+                    content=[TextContent(type="text", text="tool failed")],
+                    isError=True,
+                )
+            )
         raise SdkMcpError(ErrorData(code=-32601, message=f"unknown tool: {name}"))
+
+    server.request_handlers[CallToolRequest] = _raw_call_tool
 
     return server
 

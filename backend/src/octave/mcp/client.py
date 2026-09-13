@@ -7,12 +7,14 @@ requests, results, and the boundary where SDK exceptions are translated to
 
 from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
-from typing import Any
+from typing import Any, cast
 
 import anyio
 from mcp import ClientSession
 from mcp.shared.exceptions import McpError as SdkMcpError
+from mcp.types import ClientNotification, ClientRequest
 from mcp.types import TextContent as SdkTextContent
+from pydantic import BaseModel, ConfigDict
 
 from octave.mcp.config import McpSettings, ServerConfig
 from octave.mcp.errors import (
@@ -32,6 +34,28 @@ TransportFactory = Callable[
 ]
 """Seam letting tests inject in-memory streams instead of a real transport.
 ``open_transport`` itself satisfies this protocol (``@asynccontextmanager``)."""
+
+
+class _RawOutboundMessage(BaseModel):
+    """Permissive request/notification envelope for the raw escape hatch.
+
+    The SDK session serializes outbound messages with
+    ``model_dump(by_alias=True, mode="json", exclude_none=True)`` — this
+    shape dumps to exactly ``{"method": …, "params": …}`` and carries any
+    method name, bypassing the SDK's typed union without touching its wire
+    behavior (ID correlation, error raising stay the session's job).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    method: str
+    params: dict[str, Any] | None = None
+
+
+class _RawResultModel(BaseModel):
+    """Accepts any result payload; the escape hatch returns it as a dict."""
+
+    model_config = ConfigDict(extra="allow")
 
 
 class McpClient:
@@ -140,6 +164,34 @@ class McpClient:
             if isinstance(block, SdkTextContent):
                 content.append(ToolContent(kind="text", text=block.text))
         return ToolResult(content=content, is_error=bool(result.isError))
+
+    async def send_request(
+        self, method: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Raw JSON-RPC escape hatch: any method, raw dict result.
+
+        Covers methods the façade hasn't typed yet without leaking SDK types.
+        """
+        session = self._require_session(f"send_request({method})")
+        result = await self._run(
+            method,
+            session.send_request(
+                cast(ClientRequest, _RawOutboundMessage(method=method, params=params)),
+                cast("type[Any]", _RawResultModel),
+            ),
+        )
+        return dict(result.model_dump())
+
+    async def send_notification(
+        self, method: str, params: dict[str, Any] | None = None
+    ) -> None:
+        """Raw JSON-RPC notification (fire-and-forget)."""
+        session = self._require_session(f"send_notification({method})")
+        message = _RawOutboundMessage(method=method, params=params)
+        await self._run(
+            method,
+            session.send_notification(cast(ClientNotification, message)),
+        )
 
     def _require_session(self, operation: str) -> ClientSession:
         if self._session is None:

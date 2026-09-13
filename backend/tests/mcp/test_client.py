@@ -11,6 +11,7 @@ from octave.mcp.errors import (
     McpError,
     McpNotConnectedError,
     McpRpcError,
+    McpTimeoutError,
 )
 from octave.mcp.types import ToolContent, ToolResult
 
@@ -90,3 +91,36 @@ async def test_connect_spawn_failure_raises_connection_error() -> None:
     client = McpClient()
     with pytest.raises(McpConnectionError):
         await client.connect(StdioConfig(command="/nonexistent/octave-mcp-binary"))
+
+
+async def test_send_request_hits_raw_jsonrpc(harness: Any) -> None:
+    async with harness() as (client, _peer):
+        assert await client.send_request("ping") == {}
+
+
+async def test_send_request_unknown_method_raises_rpc_error(harness: Any) -> None:
+    async with harness() as (client, _peer):
+        with pytest.raises(McpRpcError) as excinfo:
+            await client.send_request("octave/definitely-not-a-method")
+    # SDK 1.30 validates inbound requests against the typed ClientRequest
+    # union before dispatch: an unrecognized custom method fails that
+    # validation and comes back as -32602, never reaching the -32601
+    # no-handler path. Exact verbatim code propagation is pinned by the
+    # -32601 call_tool test.
+    assert excinfo.value.code == -32602
+
+
+async def test_send_notification_is_fire_and_forget(harness: Any) -> None:
+    async with harness() as (client, _peer):
+        # A method the SDK server understands and silently handles.
+        await client.send_notification(
+            "notifications/cancelled", {"requestId": "x", "reason": "smoke"}
+        )
+
+
+async def test_slow_tool_times_out_and_session_survives(harness: Any) -> None:
+    async with harness(request_timeout=0.5) as (client, _peer):
+        with pytest.raises(McpTimeoutError):
+            await client.call_tool("slow")
+        # Abandoning the request must not poison the session (design spec).
+        assert await client.ping() is True

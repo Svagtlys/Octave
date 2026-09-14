@@ -8,10 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from octave.db.models import (
     Agent,
     Event,
+    McpServer,
     Participant,
     Session,
     SessionParticipant,
     User,
+    VaultItem,
 )
 
 
@@ -243,5 +245,110 @@ async def test_session_requires_existing_owner(
 ) -> None:
     async with session_factory() as session:
         session.add(Session(id="s_bad", created_by_user_id="ghost"))
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+
+async def _seed_user(session_factory: async_sessionmaker[AsyncSession]) -> None:
+    async with session_factory() as session:
+        session.add(User(id="u_1", display_name="Alice"))
+        await session.commit()
+
+
+async def test_mcp_stdio_round_trip(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(
+            McpServer(
+                id="m_1", name="fs", transport="stdio",
+                command="npx", args=["server-fs"], env={"KEY": "secret"},
+            )
+        )
+        await session.commit()
+        server = await session.get(McpServer, "m_1")
+        assert server is not None
+        assert server.args == ["server-fs"]
+        assert server.enabled is True
+
+
+async def test_mcp_http_round_trip(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(
+            McpServer(id="m_1", name="remote", transport="http", url="http://x/mcp")
+        )
+        await session.commit()
+
+
+async def test_mcp_stdio_requires_command(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(McpServer(id="m_bad", name="bad", transport="stdio"))
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+
+async def test_mcp_http_rejects_command(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(
+            McpServer(
+                id="m_bad", name="bad", transport="http",
+                url="http://x/mcp", command="npx",
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+
+async def test_mcp_name_unique(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(McpServer(id="m_1", name="fs", transport="http", url="http://a"))
+        session.add(McpServer(id="m_2", name="fs", transport="http", url="http://b"))
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+
+async def test_vault_item_round_trip_with_embedding(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_user(session_factory)
+    async with session_factory() as session:
+        session.add(
+            VaultItem(
+                id="v_1", user_id="u_1", kind="preference",
+                name="Terse answers", content="Lead with the result.",
+                meta={"tags": ["comms"]},
+                embedding=b"\x00\x00\x80?" * 8,
+                embedding_model="nomic-embed-text", embedding_dim=8,
+            )
+        )
+        await session.commit()
+        item = await session.get(VaultItem, "v_1")
+        assert item is not None
+        assert item.meta == {"tags": ["comms"]}
+        assert item.embedding is not None and len(item.embedding) == 32
+
+
+def test_vault_metadata_column_name_survives_reserved_attribute() -> None:
+    """``metadata`` is reserved on DeclarativeBase; attribute ``meta`` maps to
+    SQL column ``metadata``."""
+    assert "metadata" in VaultItem.__table__.c
+    assert VaultItem.__table__.c["metadata"].name == "metadata"
+
+
+async def test_vault_item_fk_to_user_enforced(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(
+            VaultItem(id="v_bad", user_id="ghost", kind="skill", name="n", content="c")
+        )
         with pytest.raises(IntegrityError):
             await session.commit()

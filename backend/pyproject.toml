@@ -4,6 +4,9 @@ version = "0.1.0"
 description = "Octave backend service"
 requires-python = ">=3.12"
 dependencies = [
+    # Versions below are pinned by the Task 1 spike resolutions.
+    "alembic>=1.20.0",
+    "aiosqlite>=0.22.1",
     "fastapi>=0.115.0",
     # Spike in Task 1 Step 3 pins the resolved version; the SDK moves fast and
     # streamablehttp_client + memory-stream test helpers must exist.
@@ -14,6 +17,14 @@ dependencies = [
     # injected-httpx-client test seam the adapter relies on.
     "openai>=2.0.0,<3.0.0",
     "pydantic-settings>=2.0.0",
+    # vec0 vector index for SQLite. Pinned by the Task 1 spike (0.1.9): the
+    # vec0 KNN syntax and serialize_float32 helper are relied on in
+    # sqlite_adapter.py. Spike A showed the connect-event unwrap path raises a
+    # threading ProgrammingError under aiosqlite; the adapter loads the
+    # extension via async_creator instead (Variant B).
+    "sqlite-vec>=0.1.9",
+    # async engine + 2.0 typed ORM declarative base (spike: 2.0.52).
+    "sqlalchemy[asyncio]>=2.0.52",
     "uvicorn[standard]>=0.34.0",
 ]
 

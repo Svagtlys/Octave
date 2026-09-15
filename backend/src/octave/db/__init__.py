@@ -5,8 +5,8 @@ Public vocabulary: ``DbAdapter`` + ``default_registry`` for engine selection,
 models for CRUD.
 
 Quarantine rule (see design spec): only ``sqlite_adapter.py`` and
-``_bootstrap.py`` touch ``sqlite_vec`` / SQLite extension loading. Everything
-else here is engine-neutral SQLAlchemy + Alembic.
+``_bootstrap.py`` import the vec0 extension module / do SQLite extension
+loading. Everything else here is engine-neutral SQLAlchemy + Alembic.
 """
 
 from octave.db.adapter import DbAdapter

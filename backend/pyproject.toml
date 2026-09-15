@@ -56,8 +56,19 @@ line-length = 88
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# Autogenerate output is regenerated, not hand-edited; its formatting is
+# Alembic's, not ours.
+"src/octave/db/migrations/versions/*" = ["E501", "I001", "W291", "E402"]
+
 [tool.mypy]
 strict = true
 python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+# sqlite-vec ships no py.typed marker; its surface (load, loadable_path,
+# serialize_float32) is small and relied on as-is.
+module = ["sqlite_vec.*"]
+ignore_missing_imports = true

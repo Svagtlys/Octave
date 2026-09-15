@@ -17,8 +17,10 @@ from octave.db.models import Base
 
 config = context.config
 
+# disable_existing_loggers defaults to True, which would permanently silence
+# every octave.* logger created at import time after the first migration run.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

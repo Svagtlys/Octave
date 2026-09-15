@@ -129,19 +129,22 @@ Orchestrates agent lifecycles, routes messages between agents and subsystems, an
 
 ## Data Layer
 
-A single vector-capable database serves as the unified storage backend:
+Single vector-capable database behind an adapter seam (`octave.db`), mirroring
+the inference adapter pattern:
 
-- **SQLite with vec0 extension** — Default lightweight local option
-- **PostgreSQL with pgvector** — Alternative for higher-scale deployments
-- **Alembic** — Schema migration management
-
-**Stored data:**
-- MCP server configurations and tool caches
-- Context vault items (skills, prompts, preferences, agent state) with vector embeddings
-- Conversation history
-- Agent run results
-
-An optional external database adapter interface in the Context Manager allows MCP servers to provide database overrides.
+- **`DbAdapter` ABC + registry** — engine selection by name or import string;
+  `sqlite` (SQLite + vec0) is the only adapter registered today, `pgvector`
+  will self-register via the plugin path when it lands
+- **Alembic** for schema migrations, run programmatically via
+  `octave.db.migrations.upgrade()` (startup auto-migration is a separate work item)
+- **Transcript vocabulary**: `sessions` / `session_participants` / `events`
+  (`events.kind` is a typed, app-validated enum — not every entry is text),
+  with `participants` as the identity supertype over `users` and `agents`
+- **Vector index is adapter-private**: `vec_vault_items_<N>` is a dim-suffixed
+  vec0 virtual table, not Alembic-managed; `vault_items.embedding` is the
+  engine-neutral cache and `content` is the source of truth
+- Stores: MCP server configs, vault items with embeddings, session transcripts,
+  agent registry entries
 
 ---
 

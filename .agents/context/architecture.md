@@ -92,11 +92,22 @@ Agent lifecycle orchestration and message routing.
 
 ## Data Layer
 
-Single vector-capable database:
+Single vector-capable database behind an adapter seam (`octave.db`), mirroring
+the inference adapter pattern:
 
-- **SQLite + vec0** (default) or **PostgreSQL + pgvector**
-- **Alembic** for schema migrations
-- Stores: MCP server configs, tool caches, context vault items with embeddings, conversation history, agent run results
+- **`DbAdapter` ABC + registry** — engine selection by name or import string;
+  `sqlite` (SQLite + vec0) is the only adapter registered today, `pgvector`
+  will self-register via the plugin path when it lands
+- **Alembic** for schema migrations, run programmatically via
+  `octave.db.migrations.upgrade()` (startup auto-migration is a separate work item)
+- **Transcript vocabulary**: `sessions` / `session_participants` / `events`
+  (`events.kind` is a typed, app-validated enum — not every entry is text),
+  with `participants` as the identity supertype over `users` and `agents`
+- **Vector index is adapter-private**: `vec_vault_items_<N>` is a dim-suffixed
+  vec0 virtual table, not Alembic-managed; `vault_items.embedding` is the
+  engine-neutral cache and `content` is the source of truth
+- Stores: MCP server configs, vault items with embeddings, session transcripts,
+  agent registry entries
 
 ## Request Lifecycle
 

@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from octave.db.config import DbConfig, DatabaseSettings
+from octave.db.config import DatabaseSettings, DbConfig
 
 
 def test_defaults_are_local_sqlite(monkeypatch: pytest.MonkeyPatch) -> None:

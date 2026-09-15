@@ -11,7 +11,7 @@ JSON dicts until their consumers exist.
 """
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel
 
@@ -23,7 +23,7 @@ __all__ = [
 ]
 
 
-class EventKind(str, Enum):
+class EventKind(StrEnum):
     """One transcript entry's type. Values are stored verbatim in ``events.kind``."""
 
     USER_MESSAGE = "user_message"

@@ -11,8 +11,12 @@ Implementations must be safe for concurrent use within one event loop.
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
-from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+)
 
 from octave.db.config import DbConfig
 from octave.db.types import VectorHit

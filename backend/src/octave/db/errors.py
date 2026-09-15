@@ -1,6 +1,6 @@
 """Octave DB exception hierarchy.
 
-Vendor exceptions (``sqlite3``, ``sqlite_vec``, SQLAlchemy, Alembic) must
+Vendor exceptions (sqlite3, the vector extension, SQLAlchemy, Alembic) must
 never escape ``octave.db``; they are translated at the adapter/migration
 boundary. Same fail-loud philosophy as ``octave.inference.errors`` and
 ``octave.mcp.errors``.

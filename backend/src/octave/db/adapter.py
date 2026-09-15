@@ -40,8 +40,7 @@ class DbAdapter(ABC):
         """Create the async engine for ``self.config.url``.
 
         Implementations must wire whatever the engine needs to function (for
-        SQLite: the ``sqlite_vec`` extension and pragmas — see
-        ``octave.db._bootstrap``).
+        SQLite: the vec0 extension and pragmas — see ``octave.db._bootstrap``).
         """
 
     @abstractmethod

@@ -5,7 +5,7 @@
 - [ ] 1. Initialize Python backend project structure (virtual env, dependencies, FastAPI/Flask server)
 - [ ] 2. Initialize React frontend project structure (Vite/Create React App, routing setup)
 - [ ] 3. Establish backend-frontend communication layer (REST API + WebSocket for real-time chat)
-- [ ] 4. Set up vector-capable database schema and ORM (SQLite with vec0 extension or PostgreSQL with pgvector; Alembic for migrations)
+- [x] 4. Set up vector-capable database schema and ORM (SQLite with vec0 extension; pgvector deferred to a pluggable adapter; Alembic for migrations) — PR #84
 
 ---
 

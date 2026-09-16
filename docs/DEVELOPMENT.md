@@ -151,12 +151,24 @@ The backend reads configuration from environment variables. Create `backend/.env
 # Server
 HOST=0.0.0.0
 PORT=8000
-
-# Database (future)
-# DATABASE_URL=sqlite:///./octave.db
 ```
 
 > **Note:** `.env` files are in `.gitignore` and never committed.
+
+#### Database Adapter
+
+The persistence layer (`octave.db`) reads `OCTAVE_DB_*` variables, via
+`DatabaseSettings` in `backend/src/octave/db/config.py`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `OCTAVE_DB_ADAPTER` | `sqlite` | Registered adapter name, or a `module.path:ClassName` import string for a third-party adapter package |
+| `OCTAVE_DB_URL` | `sqlite+aiosqlite:///octave.db` | Async SQLAlchemy URL; Alembic derives the sync mirror automatically |
+| `OCTAVE_DB_EMBEDDING_DIM` | `768` | Width of the vector index; must match the embedding model in use |
+
+Alembic CLI commands run from `backend/` (`uv run alembic upgrade head`).
+Startup auto-migration is wired in a follow-up (#85); until then, run
+`octave.db.migrations.upgrade()` or the CLI before starting the app.
 
 #### Inference Adapter
 

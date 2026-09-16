@@ -43,41 +43,57 @@ flowchart LR
   Results --> UI
 ```
 
-## Context Vault Data Model
+## Shipped Schema (v1 — PR #84)
 
 ```mermaid
 erDiagram
+  USERS ||--o{ SESSIONS : "creates"
+  USERS ||--o{ PARTICIPANTS : "identity"
+  AGENTS ||--o{ PARTICIPANTS : "identity"
+  USERS ||--o{ VAULT_ITEMS : "owns"
+  SESSIONS ||--o{ SESSION_PARTICIPANTS : "has members"
+  PARTICIPANTS ||--o{ SESSION_PARTICIPANTS : "member of"
+  SESSIONS ||--o{ EVENTS : "transcript"
+  SESSIONS ||--o{ SESSIONS : "spawns sub-sessions"
+  PARTICIPANTS ||--o{ EVENTS : "authors"
+
   VAULT_ITEM {
     string id PK
-    string type "skill | prompt | preference | agent_state"
+    string user_id FK
+    string kind "skill | prompt | preference | agent_state"
     string name
-    text content
-    json metadata
-    vector embedding
-    datetime created_at
-    datetime updated_at
+    text content "source of truth"
+    json metadata "tags live here"
+    blob embedding "float32 little-endian, nullable"
+    string embedding_model "nullable"
+    int embedding_dim "nullable"
   }
 
-  SKILL_LINK {
-    string vault_item_id PK
-    string linked_item_id PK
-    string link_type "tool | prompt"
+  SESSION {
+    string id PK
+    string created_by_user_id FK "single owner"
+    string parent_session_id FK "nullable lineage"
+    string status "active | waiting | completed | failed | cancelled"
+    string title
   }
 
-  MODEL_TAG {
-    string model_id PK
-    string tag
+  EVENT {
+    string id PK
+    string session_id FK
+    int seq "monotonic per session"
+    string kind "user_message | assistant_message | tool_call | tool_result | system"
+    string author_participant_id FK "nullable for system"
+    string target_participant_id "nullable = broadcast"
+    json payload
   }
 
-  TOOL_TAG {
-    string tool_name PK
-    string server_id
-    string tag
-    string custom_name
-    string custom_description
+  PARTICIPANT {
+    string id PK
+    string user_id FK "nullable"
+    string agent_id FK "nullable, exactly one set"
+    string label
   }
-
-  VAULT_ITEM ||--o{ SKILL_LINK : "links to"
-  VAULT_ITEM }o--|| MODEL_TAG : "requires"
-  VAULT_ITEM }o--|| TOOL_TAG : "populated by"
 ```
+
+Planned, not yet created (additive migrations in their consumer work items):
+`SKILL_LINK`, `TOOL_TAG`, `MODEL_TAG`, `TOOLS`, `INJECTION_RULES`.

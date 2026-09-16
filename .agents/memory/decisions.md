@@ -82,3 +82,33 @@ Each decision follows this structure:
 - Requires tagging convention (directory names, database metadata, or frontmatter)
 - Rebuild process needed when KB changes
 - Context Vault is read-only (edits go to KB source)
+
+### 2026-09-13 — Adapter-Style Database Engine Seam
+
+**Context:** The architecture names both SQLite+vec0 and PostgreSQL+pgvector. We need one supported engine now without locking the schema to it, and the inference package already has a proven adapter pattern.
+
+**Options Considered:**
+1. SQLite only, hard-coded — simplest, abandons the stated dual-engine plan
+2. Both engines now, with a dialect abstraction and dual CI — doubles migration and test surface before either is proven
+3. Adapter seam (ABC + registry) mirroring `octave.inference`, one adapter registered — matches an established project pattern
+
+**Decision:** Option 3. `DbAdapter` owns engine/session lifecycle, vector-store DDL, and similarity search; ORM models and the Alembic chain stay adapter-neutral; `sqlite_vec` is quarantined to `sqlite_adapter.py`/`_bootstrap.py`.
+
+**Rationale:** The inference adapter is "thick per-verb, narrow in surface" — four complete operations, nothing else. Replicating that keeps the two pluggable subsystems recognisably identical. Per-table CRUD is NOT wrapped in repositories: SQLAlchemy already abstracts it, and wrapping it would re-abstract an abstraction.
+
+**Consequences:** A pgvector adapter is additive (register a class, no schema change). Vector-index DDL cannot live in Alembic (it is engine-specific), so the index is adapter-managed and un-migrated — schema equivalence is enforced by a migration-vs-model test instead.
+
+### 2026-09-13 — Sessions/Events/Participants Transcript Vocabulary
+
+**Context:** The issue named `conversations` and `messages`. But not every LLM run is a conversation (automations, agent runs), not every transcript entry is a message (tool calls, results, context injection), and both users and agents must be able to author entries — including future A2A between agents.
+
+**Options Considered:**
+1. `conversations` + `messages` as specified — cheapest, forces a rename migration the first time an automation stores a transcript
+2. `sessions` + `messages` — fixes the container; `messages` is defensible via LLM-API content-block semantics but invents a non-API kind for context injection
+3. `sessions` + `events` + a `participants` identity supertype over `users`/`agents`
+
+**Decision:** Option 3. `events.kind` is TEXT with app-level enum validation. `sessions.created_by_user_id` is the single owner; participation is N via `session_participants`.
+
+**Rationale:** A `CHECK` on `kind` would force a table rebuild per new kind on SQLite. Ownership and participation are different axes — conflating them breaks the moment a session has two humans.
+
+**Consequences:** Multi-party/A2A/autonomous sessions are *reachable* without re-modeling, but no orchestration behavior ships: no `mode`, `driver_participant_id`, or `turn_policy` column (deferred, with rationale, to the multi-agent work item). Multi-human sessions raise an unresolved vault-visibility question, tracked as a follow-up issue.

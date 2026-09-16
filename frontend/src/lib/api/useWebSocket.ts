@@ -1,6 +1,6 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect } from 'react';
 
-export type WebSocketStatus = "connecting" | "open" | "closed" | "error";
+export type WebSocketStatus = 'connecting' | 'open' | 'closed' | 'error';
 
 interface UseWebSocketReturn {
   status: WebSocketStatus;
@@ -10,14 +10,14 @@ interface UseWebSocketReturn {
 
 function getWsUrl(url?: string): string {
   if (url) return url;
-  const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:8000";
-  const wsProtocol = apiUrl.startsWith("https") ? "wss" : "ws";
-  const host = apiUrl.replace(/^https?:\/\//, "");
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  const wsProtocol = apiUrl.startsWith('https') ? 'wss' : 'ws';
+  const host = apiUrl.replace(/^https?:\/\//, '');
   return `${wsProtocol}://${host}/ws`;
 }
 
 export function useWebSocket(url?: string): UseWebSocketReturn {
-  const [status, setStatus] = useState<WebSocketStatus>("connecting");
+  const [status, setStatus] = useState<WebSocketStatus>('connecting');
   const [lastMessage, setLastMessage] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -28,7 +28,7 @@ export function useWebSocket(url?: string): UseWebSocketReturn {
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      setStatus("open");
+      setStatus('open');
       backoffRef.current = 1000;
     };
 
@@ -37,11 +37,11 @@ export function useWebSocket(url?: string): UseWebSocketReturn {
     };
 
     ws.onerror = () => {
-      setStatus("error");
+      setStatus('error');
     };
 
     ws.onclose = () => {
-      setStatus("closed");
+      setStatus('closed');
       // Reconnect with exponential backoff
       const delay = Math.min(backoffRef.current, 8000);
       backoffRef.current *= 2;
@@ -51,17 +51,14 @@ export function useWebSocket(url?: string): UseWebSocketReturn {
     wsRef.current = ws;
   }, [url]);
 
-  const send = useCallback(
-    (message: string) => {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(message);
-      }
-    },
-    [],
-  );
+  const send = useCallback((message: string) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(message);
+    }
+  }, []);
 
   useEffect(() => {
-    setStatus("connecting");
+    setStatus('connecting');
     connect();
 
     return () => {

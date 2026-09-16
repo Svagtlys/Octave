@@ -1,6 +1,6 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderHook } from "@testing-library/react";
-import { useWebSocket } from "./useWebSocket";
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { renderHook } from '@testing-library/react';
+import { useWebSocket } from './useWebSocket';
 
 // Mock WebSocket
 class MockWebSocket {
@@ -25,9 +25,9 @@ class MockWebSocket {
   }
 }
 
-vi.stubGlobal("WebSocket", MockWebSocket);
+vi.stubGlobal('WebSocket', MockWebSocket);
 
-describe("useWebSocket", () => {
+describe('useWebSocket', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -36,24 +36,18 @@ describe("useWebSocket", () => {
     vi.useRealTimers();
   });
 
-  it("returns initial connecting status", () => {
-    const { result } = renderHook(() =>
-      useWebSocket("ws://localhost:8000/ws"),
-    );
-    expect(result.current.status).toBe("connecting");
+  it('returns initial connecting status', () => {
+    const { result } = renderHook(() => useWebSocket('ws://localhost:8000/ws'));
+    expect(result.current.status).toBe('connecting');
   });
 
-  it("provides send function", () => {
-    const { result } = renderHook(() =>
-      useWebSocket("ws://localhost:8000/ws"),
-    );
-    expect(typeof result.current.send).toBe("function");
+  it('provides send function', () => {
+    const { result } = renderHook(() => useWebSocket('ws://localhost:8000/ws'));
+    expect(typeof result.current.send).toBe('function');
   });
 
-  it("lastMessage is initially null", () => {
-    const { result } = renderHook(() =>
-      useWebSocket("ws://localhost:8000/ws"),
-    );
+  it('lastMessage is initially null', () => {
+    const { result } = renderHook(() => useWebSocket('ws://localhost:8000/ws'));
     expect(result.current.lastMessage).toBeNull();
   });
 });

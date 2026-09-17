@@ -16,7 +16,7 @@ from octave.inference.errors import (
     ModelNotFoundError,
 )
 from octave.inference.openai_adapter import OpenAIAdapter
-from octave.inference.types import CompletionRequest, Message
+from octave.inference.types import CompletionRequest, Message, ToolCall
 from tests.inference.conformance import InferenceAdapterConformanceSuite
 
 BASE_URL = "http://engine.test/v1"
@@ -31,6 +31,34 @@ CHAT_RESPONSE = {
             "index": 0,
             "message": {"role": "assistant", "content": "Hello from the engine!"},
             "finish_reason": "stop",
+        }
+    ],
+    "usage": {"prompt_tokens": 9, "completion_tokens": 12, "total_tokens": 21},
+}
+
+TOOL_CALL_RESPONSE = {
+    "id": "chatcmpl-456",
+    "object": "chat.completion",
+    "created": 1725000000,
+    "model": "fake-model",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "echo",
+                            "arguments": '{"text": "hi"}',
+                        },
+                    }
+                ],
+            },
+            "finish_reason": "tool_calls",
         }
     ],
     "usage": {"prompt_tokens": 9, "completion_tokens": 12, "total_tokens": 21},
@@ -123,6 +151,8 @@ def _handler(request: httpx.Request) -> httpx.Response:
             return _error(404, "not_found_error")
         if "boom" in content:
             return _error(500, "server_error")
+        if content == "trigger tool call":
+            return httpx.Response(200, json=TOOL_CALL_RESPONSE)
         return httpx.Response(200, json=CHAT_RESPONSE)
     if request.url.path == "/v1/embeddings":
         body = json.loads(request.content)
@@ -262,5 +292,68 @@ async def test_connection_failure_translates() -> None:
         await adapter.complete(
             CompletionRequest(model=None, messages=[Message(role="user", content="hi")])
         )
+    await adapter.aclose()
+    await client.aclose()
+
+
+async def test_tool_calls_translate_from_sdk_response() -> None:
+    client = _mock_client()
+    adapter = _adapter(client)
+    result = await adapter.complete(
+        CompletionRequest(
+            model=None,
+            messages=[Message(role="user", content="trigger tool call")],
+        )
+    )
+    assert result.finish_reason == "tool_calls"
+    assert result.tool_calls == [
+        ToolCall(id="call_1", name="echo", arguments={"text": "hi"})
+    ]
+    await adapter.aclose()
+    await client.aclose()
+
+
+async def test_response_without_tool_calls_leaves_field_none() -> None:
+    client = _mock_client()
+    adapter = _adapter(client)
+    result = await adapter.complete(
+        CompletionRequest(model=None, messages=[Message(role="user", content="hi")])
+    )
+    assert result.tool_calls is None
+    await adapter.aclose()
+    await client.aclose()
+
+
+async def test_outgoing_tool_calls_serialize_arguments_as_json_string() -> None:
+    captured: list[httpx.Request] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=CHAT_RESPONSE)
+
+    client = _mock_client(capture)
+    adapter = _adapter(client)
+    call = ToolCall(id="call_1", name="echo", arguments={"text": "hi"})
+    await adapter.complete(
+        CompletionRequest(
+            model=None,
+            messages=[
+                Message(role="user", content="hi"),
+                Message(role="assistant", content="", tool_calls=[call]),
+                Message(role="tool", content="hi back", tool_call_id="call_1"),
+            ],
+        )
+    )
+    sent_messages = json.loads(captured[0].content)["messages"]
+    assert sent_messages[1]["tool_calls"] == [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {"name": "echo", "arguments": '{"text": "hi"}'},
+        }
+    ]
+    assert sent_messages[2]["tool_call_id"] == "call_1"
+    assert "tool_calls" not in sent_messages[0]
+    assert "tool_call_id" not in sent_messages[0]
     await adapter.aclose()
     await client.aclose()

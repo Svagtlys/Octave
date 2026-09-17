@@ -5,6 +5,7 @@ QUARANTINE RULE: this is the ONLY module in Octave allowed to import
 types never appear in public signatures.
 """
 
+import json
 import logging
 from collections.abc import AsyncIterator
 from typing import Any, cast
@@ -32,7 +33,9 @@ from octave.inference.types import (
     CompletionResult,
     EmbeddingRequest,
     EmbeddingResult,
+    Message,
     ModelInfo,
+    ToolCall,
     Usage,
 )
 
@@ -64,6 +67,19 @@ def _chat_usage(usage: CompletionUsage | None) -> Usage | None:
         completion_tokens=usage.completion_tokens,
         total_tokens=usage.total_tokens,
     )
+
+
+def _chat_tool_calls(tool_calls: list[Any] | None) -> list[ToolCall] | None:
+    if not tool_calls:
+        return None
+    return [
+        ToolCall(
+            id=call.id,
+            name=call.function.name,
+            arguments=json.loads(call.function.arguments),
+        )
+        for call in tool_calls
+    ]
 
 
 @register("openai")
@@ -98,6 +114,7 @@ class OpenAIAdapter(InferenceAdapter):
             model=response.model,
             finish_reason=choice.finish_reason,
             usage=_chat_usage(response.usage),
+            tool_calls=_chat_tool_calls(choice.message.tool_calls),
         )
 
     async def stream(
@@ -158,7 +175,7 @@ class OpenAIAdapter(InferenceAdapter):
     def _chat_kwargs(self, request: CompletionRequest) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "model": self._resolve_model(request.model),
-            "messages": [message.model_dump() for message in request.messages],
+            "messages": [self._dump_message(message) for message in request.messages],
         }
         if request.temperature is not None:
             kwargs["temperature"] = request.temperature
@@ -171,6 +188,23 @@ class OpenAIAdapter(InferenceAdapter):
         if request.extra:
             kwargs["extra_body"] = dict(request.extra)
         return kwargs
+
+    def _dump_message(self, message: Message) -> dict[str, Any]:
+        dumped = message.model_dump(exclude_none=True)
+        tool_calls = dumped.get("tool_calls")
+        if tool_calls:
+            dumped["tool_calls"] = [
+                {
+                    "id": call["id"],
+                    "type": "function",
+                    "function": {
+                        "name": call["name"],
+                        "arguments": json.dumps(call["arguments"]),
+                    },
+                }
+                for call in tool_calls
+            ]
+        return dumped
 
     def _resolve_model(self, requested: str | None) -> str:
         model = requested or self._config.default_model

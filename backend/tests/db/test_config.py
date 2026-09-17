@@ -64,3 +64,13 @@ def test_config_is_frozen() -> None:
     )
     with pytest.raises((AttributeError, TypeError)):
         config.embedding_dim = 8  # type: ignore[misc]
+
+
+def test_auto_migrate_defaults_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OCTAVE_DB_AUTO_MIGRATE", raising=False)
+    assert DatabaseSettings(_env_file=None).auto_migrate is True
+
+
+def test_auto_migrate_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OCTAVE_DB_AUTO_MIGRATE", "false")
+    assert DatabaseSettings(_env_file=None).auto_migrate is False

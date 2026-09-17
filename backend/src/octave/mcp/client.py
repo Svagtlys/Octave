@@ -193,6 +193,9 @@ class McpClient:
         except (FileNotFoundError, PermissionError) as exc:
             await stack.aclose()
             raise McpConnectionError(f"Could not spawn server process: {exc}") from exc
+        except McpError:
+            await stack.aclose()
+            raise
         except Exception:
             # Config, transport, or handshake failure — unwind the stack
             # before re-raising so a half-open connection never leaks.
@@ -236,7 +239,15 @@ class McpClient:
         self._server_info = None
         self._death_reason = None
         if stack is not None:
-            await stack.aclose()
+            try:
+                await stack.aclose()
+            except Exception:
+                # Teardown noise from a connection that is already dying —
+                # the SDK surfaces child-task crashes at context exit. The
+                # connection is going away regardless; don't mask the caller.
+                logger.debug(
+                    "MCP connection teardown error suppressed", exc_info=True
+                )
         self._closing = False
 
     @property
@@ -389,11 +400,21 @@ class McpClient:
 
         An SDK ``McpError`` (a JSON-RPC error response on the wire) becomes
         ``McpRpcError`` carrying the code verbatim; timeout becomes
-        ``McpTimeoutError``. Callers only ever catch Octave types.
+        ``McpTimeoutError``; a dead transport becomes ``McpConnectionError``.
+        Callers only ever catch Octave types.
         """
+        if not self._connected:
+            raise McpConnectionError(
+                f"cannot {operation}: server connection lost "
+                f"({self._death_reason or 'reason unknown'}); call restart()"
+            )
         try:
             with anyio.fail_after(self._settings.request_timeout_seconds):
                 return await awaitable
+        except (anyio.ClosedResourceError, anyio.BrokenResourceError) as exc:
+            raise McpConnectionError(
+                f"cannot {operation}: server connection closed ({exc})"
+            ) from exc
         except TimeoutError as exc:
             raise McpTimeoutError(
                 f"{operation} timed out after {self._settings.request_timeout_seconds}s"

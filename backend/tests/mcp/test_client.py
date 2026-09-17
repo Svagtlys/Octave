@@ -342,3 +342,27 @@ async def test_clean_aclose_is_not_logged_as_death(
     async with _stub_harness():
         pass  # harness calls aclose() — intentional close, not death
     assert "connection lost" not in caplog.text
+
+
+async def test_death_via_exception_item_fails_calls_with_connection_error() -> None:
+    async with _stub_harness() as (client, swrite):
+        # SDK stdio_client forwards subprocess failures as Exception items
+        # on the read stream — the reason its type is SessionMessage | Exception.
+        await swrite.send(RuntimeError("server process exited unexpectedly"))
+        with anyio.fail_after(2):
+            while client.is_connected:
+                await anyio.sleep(0.01)
+        with pytest.raises(McpConnectionError):
+            await client.ping()
+        with pytest.raises(McpConnectionError):
+            await client.list_tools()
+
+
+async def test_calls_after_stream_close_raise_connection_error() -> None:
+    async with _stub_harness() as (client, swrite):
+        await swrite.aclose()
+        with anyio.fail_after(2):
+            while client.is_connected:
+                await anyio.sleep(0.01)
+        with pytest.raises(McpConnectionError):
+            await client.list_tools()

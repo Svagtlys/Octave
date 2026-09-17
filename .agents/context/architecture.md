@@ -99,7 +99,9 @@ the inference adapter pattern:
   `sqlite` (SQLite + vec0) is the only adapter registered today, `pgvector`
   will self-register via the plugin path when it lands
 - **Alembic** for schema migrations, run programmatically via
-  `octave.db.migrations.upgrade()` (startup auto-migration is a separate work item)
+  `octave.db.migrations.upgrade()` — auto-applied on app startup via
+  `octave.db.lifespan.db_lifespan` unless `OCTAVE_DB_AUTO_MIGRATE=false`
+  (then startup verifies the DB is migrated and fails fast if not)
 - **Transcript vocabulary**: `sessions` / `session_participants` / `events`
   (`events.kind` is a typed, app-validated enum — not every entry is text),
   with `participants` as the identity supertype over `users` and `agents`

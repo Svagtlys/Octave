@@ -165,10 +165,11 @@ The persistence layer (`octave.db`) reads `OCTAVE_DB_*` variables, via
 | `OCTAVE_DB_ADAPTER` | `sqlite` | Registered adapter name, or a `module.path:ClassName` import string for a third-party adapter package |
 | `OCTAVE_DB_URL` | `sqlite+aiosqlite:///octave.db` | Async SQLAlchemy URL; Alembic derives the sync mirror automatically |
 | `OCTAVE_DB_EMBEDDING_DIM` | `768` | Width of the vector index; must match the embedding model in use |
+| `OCTAVE_DB_AUTO_MIGRATE` | `true` | Apply pending migrations at startup. `false` skips the upgrade but still verifies the DB is migrated (startup fails fast if not) |
 
 Alembic CLI commands run from `backend/` (`uv run alembic upgrade head`).
-Startup auto-migration is wired in a follow-up (#85); until then, run
-`octave.db.migrations.upgrade()` or the CLI before starting the app.
+Migrations are auto-applied on app startup via `octave.db.lifespan.db_lifespan`
+unless `OCTAVE_DB_AUTO_MIGRATE=false`.
 
 #### Inference Adapter
 

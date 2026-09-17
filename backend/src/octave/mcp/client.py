@@ -20,7 +20,7 @@ from mcp import ClientSession
 from mcp.client.session import MessageHandlerFnT
 from mcp.shared.exceptions import McpError as SdkMcpError
 from mcp.shared.message import SessionMessage
-from mcp.types import ClientNotification, ClientRequest
+from mcp.types import ClientNotification, ClientRequest, InitializeResult
 from mcp.types import TextContent as SdkTextContent
 from pydantic import BaseModel, ConfigDict
 
@@ -160,6 +160,7 @@ class McpClient:
         self._connected = False
         self._closing = False
         self._death_reason: str | None = None
+        self._request_scopes: set[anyio.CancelScope] = set()
 
     async def connect(self, config: ServerConfig) -> None:
         """Open transport + session and run the MCP initialize handshake."""
@@ -182,8 +183,7 @@ class McpClient:
                     message_handler=cast(MessageHandlerFnT, self._on_inbound_message),
                 )
             )
-            with anyio.fail_after(self._settings.request_timeout_seconds):
-                init = await session.initialize()
+            init = await self._await_initialize(session)
         except TimeoutError as exc:
             await stack.aclose()
             raise McpTimeoutError(
@@ -224,6 +224,29 @@ class McpClient:
         self._connected = False
         self._death_reason = reason
         logger.warning("MCP server connection lost | reason=%s", reason)
+        for scope in list(self._request_scopes):
+            scope.cancel()
+
+    async def _await_initialize(self, session: ClientSession) -> InitializeResult:
+        """Run the handshake under a death-cancellable scope + timeout.
+
+        If the subprocess dies mid-handshake the monitor cancels the scope;
+        the death surfaces as ``McpConnectionError`` instead of a misleading
+        ``McpTimeoutError`` after the full request timeout.
+        """
+        scope = anyio.CancelScope()
+        self._request_scopes.add(scope)
+        try:
+            with scope:
+                with anyio.fail_after(self._settings.request_timeout_seconds):
+                    init = await session.initialize()
+        finally:
+            self._request_scopes.discard(scope)
+        if scope.cancelled_caught:
+            raise McpConnectionError(
+                f"Server process exited during initialize: {self._death_reason}"
+            )
+        return init
 
     async def aclose(self) -> None:
         """Unwind the connection (terminate subprocess / close HTTP). Idempotent.
@@ -396,21 +419,32 @@ class McpClient:
         return self._session
 
     async def _run(self, operation: str, awaitable: Awaitable[Any]) -> Any:
-        """Await ``awaitable`` under the request timeout; translate failures.
+        """Await ``awaitable`` under timeout + death-cancel scope; translate failures.
 
         An SDK ``McpError`` (a JSON-RPC error response on the wire) becomes
         ``McpRpcError`` carrying the code verbatim; timeout becomes
-        ``McpTimeoutError``; a dead transport becomes ``McpConnectionError``.
-        Callers only ever catch Octave types.
+        ``McpTimeoutError``; a dead transport (death-cancelled scope, or a
+        closed/broken stream) becomes ``McpConnectionError``. Genuine outer
+        cancellation propagates untouched — only scopes this client cancelled
+        are converted. Callers only ever catch Octave types.
         """
         if not self._connected:
             raise McpConnectionError(
                 f"cannot {operation}: server connection lost "
                 f"({self._death_reason or 'reason unknown'}); call restart()"
             )
+        scope = anyio.CancelScope()
+        self._request_scopes.add(scope)
         try:
-            with anyio.fail_after(self._settings.request_timeout_seconds):
-                return await awaitable
+            with scope:
+                with anyio.fail_after(self._settings.request_timeout_seconds):
+                    result = await awaitable
+            if scope.cancelled_caught:
+                raise McpConnectionError(
+                    f"cannot {operation}: server process exited "
+                    f"({self._death_reason or 'reason unknown'})"
+                )
+            return result
         except (anyio.ClosedResourceError, anyio.BrokenResourceError) as exc:
             raise McpConnectionError(
                 f"cannot {operation}: server connection closed ({exc})"
@@ -423,3 +457,5 @@ class McpClient:
             raise McpRpcError(
                 exc.error.message, code=exc.error.code, data=exc.error.data
             ) from exc
+        finally:
+            self._request_scopes.discard(scope)

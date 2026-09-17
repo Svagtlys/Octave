@@ -366,3 +366,60 @@ async def test_calls_after_stream_close_raise_connection_error() -> None:
                 await anyio.sleep(0.01)
         with pytest.raises(McpConnectionError):
             await client.list_tools()
+
+
+async def test_inflight_request_fails_fast_when_server_dies() -> None:
+    async with _stub_harness(request_timeout=30.0) as (client, swrite):
+        error: BaseException | None = None
+
+        async def _call() -> None:
+            nonlocal error
+            try:
+                await client.ping()  # stub peer never answers pings
+            except BaseException as exc:  # noqa: E722 — asserted below
+                error = exc
+
+        async def _die_after_a_moment() -> None:
+            await anyio.sleep(0.05)
+            await swrite.aclose()  # subprocess death mid-request
+
+        with anyio.move_on_after(5) as watchdog:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(_call)
+                tg.start_soon(_die_after_a_moment)
+
+        # Death must abort the in-flight call in milliseconds, not wait for
+        # the 30 s request timeout: the watchdog must NOT have fired.
+        assert watchdog.cancelled_caught is False
+        assert isinstance(error, McpConnectionError)
+
+
+async def test_death_during_initialize_raises_connection_error() -> None:
+    @asynccontextmanager
+    async def _dead_on_arrival(
+        _config: ServerConfig,
+    ) -> AsyncIterator[TransportStreams]:
+        # The "subprocess" dies before answering initialize: the peer's send
+        # stream is closed immediately, so the first read hits EOF.
+        async with create_client_server_memory_streams() as (
+            (cread, cwrite),
+            (_sread, swrite),
+        ):
+            await swrite.aclose()
+            yield TransportStreams(read=cread, write=cwrite)
+
+    client = McpClient(transport_factory=_dead_on_arrival)
+    with anyio.move_on_after(5) as watchdog:
+        with pytest.raises(McpConnectionError):
+            await client.connect(StdioConfig(command="dead-on-arrival"))
+    assert watchdog.cancelled_caught is False  # died fast, not a 30 s timeout
+    assert client.is_connected is False
+
+
+async def test_external_cancellation_is_not_converted() -> None:
+    async with _stub_harness() as (client, _swrite):
+        with anyio.move_on_after(0.5) as scope:
+            await client.ping()  # never answered; the caller cancels
+        # Genuine caller cancellation must propagate as cancellation, not be
+        # swallowed and converted to McpConnectionError.
+        assert scope.cancelled_caught is True

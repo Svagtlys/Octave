@@ -1,10 +1,11 @@
 from fastapi import FastAPI
 
+from octave.db.lifespan import db_lifespan
 from octave.middleware import LogRequestMiddleware, add_cors, add_error_handlers
 from octave.routes.health import router as health_router
 from octave.websocket.connection import router as ws_router
 
-app = FastAPI(title="Octave Backend")
+app = FastAPI(title="Octave Backend", lifespan=db_lifespan)
 
 # Middleware
 add_cors(app)

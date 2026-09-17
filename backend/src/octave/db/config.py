@@ -56,6 +56,10 @@ class DatabaseSettings(BaseSettings):
     url: str = "sqlite+aiosqlite:///octave.db"
     embedding_dim: int = Field(default=768, gt=0)
 
+    auto_migrate: bool = True
+    """Apply pending migrations at startup. ``False`` skips the upgrade but
+    still verifies the DB is migrated (see ``octave.db.lifespan``)."""
+
     def to_db_config(self) -> DbConfig:
         """Project these settings into the adapter-facing config object."""
         return DbConfig(

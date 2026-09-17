@@ -14,7 +14,7 @@ from octave.inference.types import (
     Usage,
 )
 
-__all__ = ["FakeAdapter"]
+__all__ = ["FakeAdapter", "ScriptedAdapter"]
 
 
 class FakeAdapter(InferenceAdapter):
@@ -62,3 +62,21 @@ class FakeAdapter(InferenceAdapter):
 
     def _model(self, requested: str | None) -> str:
         return requested or self.config.default_model or "fake-model"
+
+
+class ScriptedAdapter(FakeAdapter):
+    """Returns a pre-scripted sequence of results, one per ``complete()`` call.
+
+    Used to drive the tool-use orchestration loop deterministically: script a
+    ``tool_calls`` result followed by a ``stop`` result.
+    """
+
+    def __init__(
+        self, config: AdapterConfig, *, responses: list[CompletionResult]
+    ) -> None:
+        super().__init__(config)
+        self._responses = list(responses)
+
+    async def complete(self, request: CompletionRequest) -> CompletionResult:
+        self.complete_calls.append(request)
+        return self._responses.pop(0)

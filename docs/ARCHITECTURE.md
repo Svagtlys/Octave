@@ -58,6 +58,16 @@ errors translate to Octave types. All adapters — including third-party plugins
 by a shared conformance test suite. Design:
 [`.agents/specs/2026-09-08-inference-adapter-interface-design.md`](../.agents/specs/2026-09-08-inference-adapter-interface-design.md).
 
+**Implemented — tool-use orchestration loop (issue #79):** `octave.agent.run_tool_loop`
+drives the reason → act → observe cycle: it calls `InferenceAdapter.complete()`, and when
+the result's `finish_reason` is `"tool_calls"`, executes every requested tool concurrently
+via `McpClient.call_tool`, appends the results to the conversation, and triggers a
+follow-up completion — up to a configurable `max_iterations` safety limit. Tool execution
+failures (MCP-level or transport-level) surface back to the LLM as ordinary tool-result
+messages rather than aborting the turn. Sending tool *definitions* to the LLM in the first
+place is a separate concern (issue #78). Design:
+[`.agents/specs/2026-09-18-tool-use-orchestration-loop-design.md`](../.agents/specs/2026-09-18-tool-use-orchestration-loop-design.md).
+
 ---
 
 ### MCP Connector

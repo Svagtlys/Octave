@@ -5,5 +5,6 @@ seams; neither of those packages imports this one.
 """
 
 from octave.agent.errors import AgentError, ToolLoopMaxIterationsError
+from octave.agent.tool_loop import run_tool_loop
 
-__all__ = ["AgentError", "ToolLoopMaxIterationsError"]
+__all__ = ["AgentError", "ToolLoopMaxIterationsError", "run_tool_loop"]

@@ -6,6 +6,10 @@ from typing import Any
 
 import anyio
 import pytest
+from anyio.streams.memory import (
+    MemoryObjectReceiveStream,
+    MemoryObjectSendStream,
+)
 from mcp.shared.memory import create_client_server_memory_streams
 from mcp.shared.message import SessionMessage
 from mcp.types import (
@@ -255,3 +259,86 @@ async def test_inbound_request_rejected_with_method_not_found() -> None:
     # -32601 method-not-found. The seam this test pins: inbound requests
     # get a JSON-RPC error response, never silence (design decision 4).
     assert response.error.code == -32600
+
+
+# ---------------------------------------------------------------------------
+# Stub-peer harness for exit-detection tests. The peer answers ONLY the
+# initialize handshake; everything else (pings, tool calls) goes unanswered,
+# and tests kill the connection by closing the peer's send stream or pushing
+# an Exception item — exactly what SDK stdio_client emits on subprocess
+# death. Mirrors the standalone stub in test_inbound_request_rejected…
+# ---------------------------------------------------------------------------
+
+
+async def _answer_initialize_only(
+    sread: MemoryObjectReceiveStream[SessionMessage | Exception],
+    swrite: MemoryObjectSendStream[SessionMessage],
+) -> None:
+    """Minimal peer: respond to initialize, ignore everything else."""
+    async for message in sread:
+        root = message.message.root
+        if isinstance(root, JSONRPCRequest) and root.method == "initialize":
+            await swrite.send(
+                SessionMessage(
+                    JSONRPCMessage(
+                        root=JSONRPCResponse(
+                            jsonrpc="2.0", id=root.id, result=_INIT_RESULT
+                        )
+                    )
+                )
+            )
+
+
+@asynccontextmanager
+async def _stub_harness(
+    *, request_timeout: float = 30.0
+) -> AsyncIterator[
+    tuple[McpClient, MemoryObjectSendStream[SessionMessage | Exception]]
+]:
+    """Client connected to the stub peer. Yields (client, peer_send_stream)."""
+    async with create_client_server_memory_streams() as (
+        (cread, cwrite),
+        (sread, swrite),
+    ):
+
+        @asynccontextmanager
+        async def _factory(_config: ServerConfig) -> AsyncIterator[TransportStreams]:
+            yield TransportStreams(read=cread, write=cwrite)
+
+        client = McpClient(
+            transport_factory=_factory,
+            settings=McpSettings(request_timeout_seconds=request_timeout),
+        )
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(_answer_initialize_only, sread, swrite)
+            await client.connect(StdioConfig(command="stub-peer"))
+            try:
+                yield client, swrite
+            finally:
+                await client.aclose()
+                tg.cancel_scope.cancel()
+
+
+async def test_is_connected_tracks_lifecycle() -> None:
+    assert McpClient().is_connected is False
+    async with _stub_harness() as (client, _swrite):
+        assert client.is_connected is True
+    assert client.is_connected is False
+
+
+async def test_stream_close_marks_disconnected() -> None:
+    async with _stub_harness() as (client, swrite):
+        # EOF — what a dead subprocess pipe looks like to the reader.
+        await swrite.aclose()
+        with anyio.fail_after(2):
+            while client.is_connected:
+                await anyio.sleep(0.01)
+        assert client.is_connected is False
+
+
+async def test_clean_aclose_is_not_logged_as_death(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async with _stub_harness():
+        pass  # harness calls aclose() — intentional close, not death
+    assert "connection lost" not in caplog.text

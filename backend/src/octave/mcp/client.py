@@ -5,8 +5,10 @@ requests, results, and the boundary where SDK exceptions are translated to
 ``octave.mcp.errors``. SDK types never appear in public signatures.
 """
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from types import TracebackType
 from typing import Any, cast
 
 import anyio
@@ -17,6 +19,7 @@ from anyio.streams.memory import (
 from mcp import ClientSession
 from mcp.client.session import MessageHandlerFnT
 from mcp.shared.exceptions import McpError as SdkMcpError
+from mcp.shared.message import SessionMessage
 from mcp.types import ClientNotification, ClientRequest
 from mcp.types import TextContent as SdkTextContent
 from pydantic import BaseModel, ConfigDict
@@ -40,11 +43,76 @@ from octave.mcp.types import (
 
 __all__ = ["McpClient"]
 
+logger = logging.getLogger(__name__)
+
 TransportFactory = Callable[
     [ServerConfig], AbstractAsyncContextManager[TransportStreams]
 ]
 """Seam letting tests inject in-memory streams instead of a real transport.
 ``open_transport`` itself satisfies this protocol (``@asynccontextmanager``)."""
+
+
+class _MonitoredReadStream:
+    """Delegating wrapper that reports unexpected stream end as server death.
+
+    Implements the subset of the anyio receive-stream interface the SDK
+    session uses (``receive``, async iteration, ``aclose``, async context
+    manager). On ``EndOfStream``, a closed/broken resource, or an
+    ``Exception`` item — the signals SDK ``stdio_client`` emits when the
+    subprocess dies — calls ``on_death(reason)`` once, then forwards the
+    signal unchanged so SDK behavior is untouched.
+    """
+
+    def __init__(
+        self,
+        inner: MemoryObjectReceiveStream[SessionMessage | Exception],
+        on_death: Callable[[str], None],
+    ) -> None:
+        self._inner = inner
+        self._on_death = on_death
+        self._reported = False
+
+    def _report(self, reason: str) -> None:
+        if not self._reported:
+            self._reported = True
+            self._on_death(reason)
+
+    async def receive(self) -> SessionMessage | Exception:
+        try:
+            item = await self._inner.receive()
+        except (
+            anyio.EndOfStream,
+            anyio.ClosedResourceError,
+            anyio.BrokenResourceError,
+        ) as exc:
+            self._report(f"read stream {type(exc).__name__}")
+            raise
+        if isinstance(item, Exception):
+            self._report(f"read stream delivered {type(item).__name__}: {item}")
+        return item
+
+    def __aiter__(self) -> AsyncIterator[SessionMessage | Exception]:
+        return self
+
+    async def __anext__(self) -> SessionMessage | Exception:
+        try:
+            return await self.receive()
+        except anyio.EndOfStream:
+            raise StopAsyncIteration from None
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+    async def __aenter__(self) -> "_MonitoredReadStream":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        await self.aclose()
 
 
 class _RawOutboundMessage(BaseModel):
@@ -89,17 +157,25 @@ class McpClient:
         self._session: ClientSession | None = None
         self._server_info: ServerInfo | None = None
         self._notification_senders: list[MemoryObjectSendStream[Notification]] = []
+        self._connected = False
+        self._closing = False
+        self._death_reason: str | None = None
 
     async def connect(self, config: ServerConfig) -> None:
         """Open transport + session and run the MCP initialize handshake."""
         if self._session is not None:
             raise McpError("Already connected — call aclose() first")
+        self._death_reason = None
         stack = AsyncExitStack()
         try:
             streams = await stack.enter_async_context(self._transport_factory(config))
+            monitored = _MonitoredReadStream(streams.read, self._on_transport_death)
             session = await stack.enter_async_context(
                 ClientSession(
-                    streams.read,
+                    cast(
+                        MemoryObjectReceiveStream[SessionMessage | Exception],
+                        monitored,
+                    ),
                     streams.write,
                     # ``*args`` absorbs both SDK handler conventions, so it
                     # can't structurally match the two-arg Protocol — cast.
@@ -124,6 +200,7 @@ class McpClient:
             raise
         self._stack = stack
         self._session = session
+        self._connected = True
         self._server_info = ServerInfo(
             name=init.serverInfo.name,
             version=init.serverInfo.version,
@@ -132,14 +209,45 @@ class McpClient:
             protocol_version=str(init.protocolVersion),
         )
 
+    def _on_transport_death(self, reason: str) -> None:
+        """Monitor callback: mark disconnected, record the reason, log.
+
+        Runs inside the SDK receive loop, so it cannot await — it does NOT
+        unwind the exit stack; ``aclose()``/``restart()`` do the teardown.
+        Suppressed while ``aclose()`` is tearing down intentionally.
+        """
+        if self._closing:
+            return  # intentional teardown, not a death
+        self._connected = False
+        self._death_reason = reason
+        logger.warning("MCP server connection lost | reason=%s", reason)
+
     async def aclose(self) -> None:
-        """Unwind the connection (terminate subprocess / close HTTP). Idempotent."""
+        """Unwind the connection (terminate subprocess / close HTTP). Idempotent.
+
+        Sets the closing flag first so the read-stream monitor treats the
+        teardown as an intentional close, not a subprocess death.
+        """
+        self._closing = True
+        self._connected = False
         stack = self._stack
         self._stack = None
         self._session = None
         self._server_info = None
+        self._death_reason = None
         if stack is not None:
             await stack.aclose()
+        self._closing = False
+
+    @property
+    def is_connected(self) -> bool:
+        """True between a successful ``connect()`` and ``aclose()`` or death.
+
+        Cheap synchronous flag — no I/O. Observers (health checks, UI) poll
+        this instead of pinging; callers learn of death via
+        ``McpConnectionError``.
+        """
+        return self._connected
 
     @property
     def server_info(self) -> ServerInfo:

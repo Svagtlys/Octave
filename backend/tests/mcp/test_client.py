@@ -32,6 +32,8 @@ from octave.mcp.errors import (
 from octave.mcp.transport import TransportStreams
 from octave.mcp.types import Notification, ToolContent, ToolResult
 
+from .conftest import build_server
+
 _INIT_RESULT = {
     "protocolVersion": LATEST_PROTOCOL_VERSION,
     "capabilities": {},
@@ -423,3 +425,91 @@ async def test_external_cancellation_is_not_converted() -> None:
         # Genuine caller cancellation must propagate as cancellation, not be
         # swallowed and converted to McpConnectionError.
         assert scope.cancelled_caught is True
+
+
+@asynccontextmanager
+async def _reconnectable_harness() -> AsyncIterator[tuple[McpClient, list[int]]]:
+    """Client whose factory spawns a fresh in-process server per call.
+
+    Mirrors what restart() does against a real subprocess: every factory
+    call is a fresh spawn with its own server, streams, and handshake.
+    Yields (client, spawn-log).
+    """
+    spawns: list[int] = []
+
+    @asynccontextmanager
+    async def _factory(_config: ServerConfig) -> AsyncIterator[TransportStreams]:
+        spawns.append(len(spawns))
+        server = build_server()
+        async with create_client_server_memory_streams() as (
+            (cread, cwrite),
+            (sread, swrite),
+        ):
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(
+                    server.run, sread, swrite, server.create_initialization_options()
+                )
+                try:
+                    yield TransportStreams(read=cread, write=cwrite)
+                finally:
+                    tg.cancel_scope.cancel()
+
+    client = McpClient(transport_factory=_factory)
+    await client.connect(StdioConfig(command="in-process"))
+    try:
+        yield client, spawns
+    finally:
+        await client.aclose()
+
+
+async def test_restart_reconnects_from_stored_config() -> None:
+    async with _reconnectable_harness() as (client, spawns):
+        assert spawns == [0]
+        assert client.is_connected is True
+        await client.restart()
+        assert client.is_connected is True
+        assert spawns == [0, 1]  # a fresh spawn ran
+        tools = await client.list_tools()
+        assert [tool.name for tool in tools] == ["echo", "slow", "tool_error"]
+    assert client.is_connected is False
+
+
+async def test_restart_respawn_failure_keeps_client_dead_and_retryable() -> None:
+    attempts: list[int] = []
+
+    @asynccontextmanager
+    async def _flaky_factory(
+        _config: ServerConfig,
+    ) -> AsyncIterator[TransportStreams]:
+        attempts.append(1)
+        if len(attempts) == 2:
+            # The binary "went away" between restarts.
+            raise FileNotFoundError(2, "No such file or directory")
+        async with create_client_server_memory_streams() as (
+            (cread, cwrite),
+            (sread, swrite),
+        ):
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(_answer_initialize_only, sread, swrite)
+                try:
+                    yield TransportStreams(read=cread, write=cwrite)
+                finally:
+                    tg.cancel_scope.cancel()
+
+    client = McpClient(transport_factory=_flaky_factory)
+    await client.connect(StdioConfig(command="flaky"))
+    assert client.is_connected is True
+
+    with pytest.raises(McpConnectionError):
+        await client.restart()  # second spawn fails
+    assert client.is_connected is False
+    assert len(attempts) == 2
+
+    await client.restart()  # third spawn succeeds — config retained
+    assert client.is_connected is True
+    await client.aclose()
+
+
+async def test_restart_before_connect_raises_not_connected() -> None:
+    with pytest.raises(McpNotConnectedError):
+        await McpClient().restart()

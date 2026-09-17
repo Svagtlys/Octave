@@ -161,6 +161,7 @@ class McpClient:
         self._closing = False
         self._death_reason: str | None = None
         self._request_scopes: set[anyio.CancelScope] = set()
+        self._config: ServerConfig | None = None
 
     async def connect(self, config: ServerConfig) -> None:
         """Open transport + session and run the MCP initialize handshake."""
@@ -203,6 +204,7 @@ class McpClient:
             raise
         self._stack = stack
         self._session = session
+        self._config = config
         self._connected = True
         self._server_info = ServerInfo(
             name=init.serverInfo.name,
@@ -282,6 +284,28 @@ class McpClient:
         ``McpConnectionError``.
         """
         return self._connected
+
+    async def restart(self) -> None:
+        """Manually restart the connection: teardown, respawn, re-handshake.
+
+        Uses the config from the last successful ``connect()``. Spawn or
+        handshake failures raise (normally ``McpConnectionError``) with the
+        client left disconnected and the config retained, so ``restart()``
+        is retryable. Lifecycle operations are single-caller by contract —
+        the same convention as ``connect()``/``aclose()``.
+        """
+        if self._config is None:
+            raise McpNotConnectedError(
+                "cannot restart: connect() has never been called"
+            )
+        config = self._config
+        await self.aclose()
+        try:
+            await self.connect(config)
+        except McpError:
+            logger.exception("MCP server restart failed")
+            raise
+        logger.info("MCP server connection restarted")
 
     @property
     def server_info(self) -> ServerInfo:

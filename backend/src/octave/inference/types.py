@@ -17,10 +17,19 @@ __all__ = [
     "EmbeddingResult",
     "Message",
     "ModelInfo",
+    "ToolCall",
     "Usage",
 ]
 
-Role = Literal["system", "user", "assistant"]
+Role = Literal["system", "user", "assistant", "tool"]
+
+
+class ToolCall(BaseModel):
+    """One tool invocation requested by the LLM."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any]
 
 
 class Message(BaseModel):
@@ -28,6 +37,8 @@ class Message(BaseModel):
 
     role: Role
     content: str
+    tool_calls: list[ToolCall] | None = None
+    tool_call_id: str | None = None
 
 
 class Usage(BaseModel):
@@ -60,6 +71,7 @@ class CompletionResult(BaseModel):
     model: str
     finish_reason: str | None = None
     usage: Usage | None = None
+    tool_calls: list[ToolCall] | None = None
 
 
 class CompletionChunk(BaseModel):

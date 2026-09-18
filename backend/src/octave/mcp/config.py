@@ -62,3 +62,18 @@ class McpSettings(BaseSettings):
     )
 
     request_timeout_seconds: float = 30.0
+
+    restart_base_delay_seconds: float = 1.0
+    """First auto-restart delay; exponential backoff multiplies by 2 per attempt."""
+
+    restart_max_delay_seconds: float = 60.0
+    """Cap on the backoff delay."""
+
+    restart_max_attempts: int = 5
+    """Consecutive failed restart cycles before a server enters 'crashed'."""
+
+    probe_timeout_seconds: float = 5.0
+    """Budget for the manager's confirming ping after a request timeout."""
+
+    stabilization_seconds: float = 60.0
+    """Time a connection must hold before the failure counter resets."""

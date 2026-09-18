@@ -44,3 +44,15 @@ def test_settings_default_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_settings_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OCTAVE_MCP_REQUEST_TIMEOUT_SECONDS", "5")
     assert McpSettings().request_timeout_seconds == 5.0
+
+
+class TestSupervisionSettings:
+    """Lifecycle-manager knobs (spec: restart policy table)."""
+
+    def test_defaults(self) -> None:
+        settings = McpSettings()
+        assert settings.restart_base_delay_seconds == 1.0
+        assert settings.restart_max_delay_seconds == 60.0
+        assert settings.restart_max_attempts == 5
+        assert settings.probe_timeout_seconds == 5.0
+        assert settings.stabilization_seconds == 60.0

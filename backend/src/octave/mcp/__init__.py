@@ -16,6 +16,7 @@ from octave.mcp.errors import (
     McpRpcError,
     McpTimeoutError,
 )
+from octave.mcp.lifespan import mcp_lifespan
 from octave.mcp.manager import McpServerManager, ServerState, ServerStatus
 from octave.mcp.types import (
     Notification,
@@ -46,4 +47,5 @@ __all__ = [
     "ToolInfo",
     "ToolResult",
     "get_mcp_manager",
+    "mcp_lifespan",
 ]

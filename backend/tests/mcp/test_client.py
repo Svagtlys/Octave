@@ -513,3 +513,35 @@ async def test_restart_respawn_failure_keeps_client_dead_and_retryable() -> None
 async def test_restart_before_connect_raises_not_connected() -> None:
     with pytest.raises(McpNotConnectedError):
         await McpClient().restart()
+
+
+async def test_on_lost_fires_death_when_server_process_dies(harness: Any) -> None:
+    reasons: list[str] = []
+    async with harness(on_lost=reasons.append) as (_client, peer):
+        await peer.swrite.aclose()  # read stream dies → monitor fires
+        await anyio.sleep(0.05)
+    assert reasons == ["death"]
+
+
+async def test_on_lost_fires_timeout_on_request_timeout(harness: Any) -> None:
+    reasons: list[str] = []
+    async with harness(request_timeout=0.1, on_lost=reasons.append) as (client, _peer):
+        with pytest.raises(McpTimeoutError):
+            await client.call_tool("slow")  # harness 'slow' sleeps 30s
+    assert reasons == ["timeout"]
+
+
+async def test_on_lost_not_fired_on_success(harness: Any) -> None:
+    reasons: list[str] = []
+    async with harness(on_lost=reasons.append) as (client, _peer):
+        await client.call_tool("echo", {"text": "hi"})
+    assert reasons == []
+
+
+async def test_on_lost_hook_exception_never_reaches_caller(harness: Any) -> None:
+    def boom(_reason: str) -> None:
+        raise RuntimeError("hook bug")
+
+    async with harness(request_timeout=0.1, on_lost=boom) as (client, _peer):
+        with pytest.raises(McpTimeoutError):  # the Octave error, not RuntimeError
+            await client.call_tool("slow")

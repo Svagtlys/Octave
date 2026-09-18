@@ -150,9 +150,11 @@ class McpClient:
         *,
         transport_factory: TransportFactory = open_transport,
         settings: McpSettings | None = None,
+        on_lost: Callable[[str], None] | None = None,
     ) -> None:
         self._transport_factory = transport_factory
         self._settings = settings or McpSettings()
+        self._on_lost = on_lost
         self._stack: AsyncExitStack | None = None
         self._session: ClientSession | None = None
         self._server_info: ServerInfo | None = None
@@ -228,6 +230,22 @@ class McpClient:
         logger.warning("MCP server connection lost | reason=%s", reason)
         for scope in list(self._request_scopes):
             scope.cancel()
+        self._fire_lost("death")
+
+    def _fire_lost(self, reason: str) -> None:
+        """Notify the manager of a lost connection; never break the client.
+
+        ``reason`` is ``"death"`` (transport died) or ``"timeout"`` (a request
+        timed out — the server may be wedged). Synchronous; exceptions from
+        the hook are suppressed so a manager bug can never corrupt the
+        client's own error reporting.
+        """
+        if self._on_lost is None:
+            return
+        try:
+            self._on_lost(reason)
+        except Exception:
+            logger.warning("MCP on_lost hook raised", exc_info=True)
 
     async def _await_initialize(self, session: ClientSession) -> InitializeResult:
         """Run the handshake under a death-cancellable scope + timeout.
@@ -474,6 +492,7 @@ class McpClient:
                 f"cannot {operation}: server connection closed ({exc})"
             ) from exc
         except TimeoutError as exc:
+            self._fire_lost("timeout")
             raise McpTimeoutError(
                 f"{operation} timed out after {self._settings.request_timeout_seconds}s"
             ) from exc

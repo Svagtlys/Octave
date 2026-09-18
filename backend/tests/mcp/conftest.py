@@ -135,7 +135,9 @@ class Peer:
 
 @asynccontextmanager
 async def harness_cm(
-    *, request_timeout: float = 5.0
+    *,
+    request_timeout: float = 5.0,
+    on_lost: Callable[[str], None] | None = None,
 ) -> AsyncIterator[tuple[McpClient, Peer]]:
     """Connect an ``McpClient`` to an in-process SDK server."""
     server = build_server()
@@ -152,6 +154,7 @@ async def harness_cm(
         client = McpClient(
             transport_factory=_factory,
             settings=McpSettings(request_timeout_seconds=request_timeout),
+            on_lost=on_lost,
         )
         async with anyio.create_task_group() as tg:
 

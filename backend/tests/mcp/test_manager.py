@@ -259,6 +259,60 @@ class TestSupervision:
         finally:
             await manager.stop_all()
 
+
+class TestProbeAndStabilization:
+    async def test_timeout_probe_ok_keeps_server_connected(self) -> None:
+        manager, factory = make_manager("a")
+        await manager.start_all()
+        try:
+            await wait_for(manager, "a", lambda s: s.state == "connected")
+            factory.clients[0].hang()  # request timed out; server answers ping
+            await anyio.sleep(0.1)  # give the supervisor time to act
+            status = manager.status_of("a")
+            assert status.state == "connected"
+            assert status.restart_count == 0
+            assert factory.clients[0].ping_calls == 1
+            assert factory.clients[0].aclose_calls == 0
+        finally:
+            await manager.stop_all()
+
+    async def test_timeout_probe_failure_restarts(self) -> None:
+        manager, factory = make_manager("a")
+        await manager.start_all()
+        try:
+            await wait_for(manager, "a", lambda s: s.state == "connected")
+            factory.clients[0].ping_error = McpTimeoutError("ping wedged")
+            factory.clients[0].hang()
+            status = await wait_for(
+                manager, "a", lambda s: s.state == "connected" and s.restart_count == 1
+            )
+            assert status.restart_count == 1
+        finally:
+            await manager.stop_all()
+
+    async def test_stabilization_resets_failure_counter(self) -> None:
+        manager, factory = make_manager("a")
+        await manager.start_all()
+        try:
+            factory.clients[0].die()  # first crash → restart #1, streak starts
+            await wait_for(
+                manager, "a", lambda s: s.state == "connected" and s.restart_count == 1
+            )
+            assert manager.status_of("a").consecutive_failures == 1
+            factory.clients[0].die()  # re-die inside the stabilization window
+            await wait_for(
+                manager, "a", lambda s: s.state == "connected" and s.restart_count == 2
+            )
+            assert manager.status_of("a").consecutive_failures == 2  # escalated
+            await anyio.sleep(FAST.stabilization_seconds + 0.05)
+            factory.clients[0].die()  # died after holding past the window
+            status = await wait_for(
+                manager, "a", lambda s: s.state == "connected" and s.restart_count == 3
+            )
+            assert status.consecutive_failures == 1  # counter reset
+        finally:
+            await manager.stop_all()
+
     async def test_multi_server_independence(self) -> None:
         manager, factory = make_manager("bad", "good")
         factory.clients[0].connect_error = McpConnectionError("bad binary")

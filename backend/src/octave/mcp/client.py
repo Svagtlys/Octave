@@ -5,8 +5,10 @@ requests, results, and the boundary where SDK exceptions are translated to
 ``octave.mcp.errors``. SDK types never appear in public signatures.
 """
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from types import TracebackType
 from typing import Any, cast
 
 import anyio
@@ -17,7 +19,8 @@ from anyio.streams.memory import (
 from mcp import ClientSession
 from mcp.client.session import MessageHandlerFnT
 from mcp.shared.exceptions import McpError as SdkMcpError
-from mcp.types import ClientNotification, ClientRequest
+from mcp.shared.message import SessionMessage
+from mcp.types import ClientNotification, ClientRequest, InitializeResult
 from mcp.types import TextContent as SdkTextContent
 from pydantic import BaseModel, ConfigDict
 
@@ -40,11 +43,76 @@ from octave.mcp.types import (
 
 __all__ = ["McpClient"]
 
+logger = logging.getLogger(__name__)
+
 TransportFactory = Callable[
     [ServerConfig], AbstractAsyncContextManager[TransportStreams]
 ]
 """Seam letting tests inject in-memory streams instead of a real transport.
 ``open_transport`` itself satisfies this protocol (``@asynccontextmanager``)."""
+
+
+class _MonitoredReadStream:
+    """Delegating wrapper that reports unexpected stream end as server death.
+
+    Implements the subset of the anyio receive-stream interface the SDK
+    session uses (``receive``, async iteration, ``aclose``, async context
+    manager). On ``EndOfStream``, a closed/broken resource, or an
+    ``Exception`` item — the signals SDK ``stdio_client`` emits when the
+    subprocess dies — calls ``on_death(reason)`` once, then forwards the
+    signal unchanged so SDK behavior is untouched.
+    """
+
+    def __init__(
+        self,
+        inner: MemoryObjectReceiveStream[SessionMessage | Exception],
+        on_death: Callable[[str], None],
+    ) -> None:
+        self._inner = inner
+        self._on_death = on_death
+        self._reported = False
+
+    def _report(self, reason: str) -> None:
+        if not self._reported:
+            self._reported = True
+            self._on_death(reason)
+
+    async def receive(self) -> SessionMessage | Exception:
+        try:
+            item = await self._inner.receive()
+        except (
+            anyio.EndOfStream,
+            anyio.ClosedResourceError,
+            anyio.BrokenResourceError,
+        ) as exc:
+            self._report(f"read stream {type(exc).__name__}")
+            raise
+        if isinstance(item, Exception):
+            self._report(f"read stream delivered {type(item).__name__}: {item}")
+        return item
+
+    def __aiter__(self) -> AsyncIterator[SessionMessage | Exception]:
+        return self
+
+    async def __anext__(self) -> SessionMessage | Exception:
+        try:
+            return await self.receive()
+        except anyio.EndOfStream:
+            raise StopAsyncIteration from None
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+    async def __aenter__(self) -> "_MonitoredReadStream":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        await self.aclose()
 
 
 class _RawOutboundMessage(BaseModel):
@@ -89,25 +157,34 @@ class McpClient:
         self._session: ClientSession | None = None
         self._server_info: ServerInfo | None = None
         self._notification_senders: list[MemoryObjectSendStream[Notification]] = []
+        self._connected = False
+        self._closing = False
+        self._death_reason: str | None = None
+        self._request_scopes: set[anyio.CancelScope] = set()
+        self._config: ServerConfig | None = None
 
     async def connect(self, config: ServerConfig) -> None:
         """Open transport + session and run the MCP initialize handshake."""
         if self._session is not None:
             raise McpError("Already connected — call aclose() first")
+        self._death_reason = None
         stack = AsyncExitStack()
         try:
             streams = await stack.enter_async_context(self._transport_factory(config))
+            monitored = _MonitoredReadStream(streams.read, self._on_transport_death)
             session = await stack.enter_async_context(
                 ClientSession(
-                    streams.read,
+                    cast(
+                        MemoryObjectReceiveStream[SessionMessage | Exception],
+                        monitored,
+                    ),
                     streams.write,
                     # ``*args`` absorbs both SDK handler conventions, so it
                     # can't structurally match the two-arg Protocol — cast.
                     message_handler=cast(MessageHandlerFnT, self._on_inbound_message),
                 )
             )
-            with anyio.fail_after(self._settings.request_timeout_seconds):
-                init = await session.initialize()
+            init = await self._await_initialize(session)
         except TimeoutError as exc:
             await stack.aclose()
             raise McpTimeoutError(
@@ -117,6 +194,9 @@ class McpClient:
         except (FileNotFoundError, PermissionError) as exc:
             await stack.aclose()
             raise McpConnectionError(f"Could not spawn server process: {exc}") from exc
+        except McpError:
+            await stack.aclose()
+            raise
         except Exception:
             # Config, transport, or handshake failure — unwind the stack
             # before re-raising so a half-open connection never leaks.
@@ -124,6 +204,8 @@ class McpClient:
             raise
         self._stack = stack
         self._session = session
+        self._config = config
+        self._connected = True
         self._server_info = ServerInfo(
             name=init.serverInfo.name,
             version=init.serverInfo.version,
@@ -132,14 +214,98 @@ class McpClient:
             protocol_version=str(init.protocolVersion),
         )
 
+    def _on_transport_death(self, reason: str) -> None:
+        """Monitor callback: mark disconnected, record the reason, log.
+
+        Runs inside the SDK receive loop, so it cannot await — it does NOT
+        unwind the exit stack; ``aclose()``/``restart()`` do the teardown.
+        Suppressed while ``aclose()`` is tearing down intentionally.
+        """
+        if self._closing:
+            return  # intentional teardown, not a death
+        self._connected = False
+        self._death_reason = reason
+        logger.warning("MCP server connection lost | reason=%s", reason)
+        for scope in list(self._request_scopes):
+            scope.cancel()
+
+    async def _await_initialize(self, session: ClientSession) -> InitializeResult:
+        """Run the handshake under a death-cancellable scope + timeout.
+
+        If the subprocess dies mid-handshake the monitor cancels the scope;
+        the death surfaces as ``McpConnectionError`` instead of a misleading
+        ``McpTimeoutError`` after the full request timeout.
+        """
+        scope = anyio.CancelScope()
+        self._request_scopes.add(scope)
+        try:
+            with scope:
+                with anyio.fail_after(self._settings.request_timeout_seconds):
+                    init = await session.initialize()
+        finally:
+            self._request_scopes.discard(scope)
+        if scope.cancelled_caught:
+            raise McpConnectionError(
+                f"Server process exited during initialize: {self._death_reason}"
+            )
+        return init
+
     async def aclose(self) -> None:
-        """Unwind the connection (terminate subprocess / close HTTP). Idempotent."""
+        """Unwind the connection (terminate subprocess / close HTTP). Idempotent.
+
+        Sets the closing flag first so the read-stream monitor treats the
+        teardown as an intentional close, not a subprocess death.
+        """
+        self._closing = True
+        self._connected = False
         stack = self._stack
         self._stack = None
         self._session = None
         self._server_info = None
+        self._death_reason = None
         if stack is not None:
-            await stack.aclose()
+            try:
+                await stack.aclose()
+            except Exception:
+                # Teardown noise from a connection that is already dying —
+                # the SDK surfaces child-task crashes at context exit. The
+                # connection is going away regardless; don't mask the caller.
+                logger.debug(
+                    "MCP connection teardown error suppressed", exc_info=True
+                )
+        self._closing = False
+
+    @property
+    def is_connected(self) -> bool:
+        """True between a successful ``connect()`` and ``aclose()`` or death.
+
+        Cheap synchronous flag — no I/O. Observers (health checks, UI) poll
+        this instead of pinging; callers learn of death via
+        ``McpConnectionError``.
+        """
+        return self._connected
+
+    async def restart(self) -> None:
+        """Manually restart the connection: teardown, respawn, re-handshake.
+
+        Uses the config from the last successful ``connect()``. Spawn or
+        handshake failures raise (normally ``McpConnectionError``) with the
+        client left disconnected and the config retained, so ``restart()``
+        is retryable. Lifecycle operations are single-caller by contract —
+        the same convention as ``connect()``/``aclose()``.
+        """
+        if self._config is None:
+            raise McpNotConnectedError(
+                "cannot restart: connect() has never been called"
+            )
+        config = self._config
+        await self.aclose()
+        try:
+            await self.connect(config)
+        except McpError:
+            logger.exception("MCP server restart failed")
+            raise
+        logger.info("MCP server connection restarted")
 
     @property
     def server_info(self) -> ServerInfo:
@@ -277,15 +443,36 @@ class McpClient:
         return self._session
 
     async def _run(self, operation: str, awaitable: Awaitable[Any]) -> Any:
-        """Await ``awaitable`` under the request timeout; translate failures.
+        """Await ``awaitable`` under timeout + death-cancel scope; translate failures.
 
         An SDK ``McpError`` (a JSON-RPC error response on the wire) becomes
         ``McpRpcError`` carrying the code verbatim; timeout becomes
-        ``McpTimeoutError``. Callers only ever catch Octave types.
+        ``McpTimeoutError``; a dead transport (death-cancelled scope, or a
+        closed/broken stream) becomes ``McpConnectionError``. Genuine outer
+        cancellation propagates untouched — only scopes this client cancelled
+        are converted. Callers only ever catch Octave types.
         """
+        if not self._connected:
+            raise McpConnectionError(
+                f"cannot {operation}: server connection lost "
+                f"({self._death_reason or 'reason unknown'}); call restart()"
+            )
+        scope = anyio.CancelScope()
+        self._request_scopes.add(scope)
         try:
-            with anyio.fail_after(self._settings.request_timeout_seconds):
-                return await awaitable
+            with scope:
+                with anyio.fail_after(self._settings.request_timeout_seconds):
+                    result = await awaitable
+            if scope.cancelled_caught:
+                raise McpConnectionError(
+                    f"cannot {operation}: server process exited "
+                    f"({self._death_reason or 'reason unknown'})"
+                )
+            return result
+        except (anyio.ClosedResourceError, anyio.BrokenResourceError) as exc:
+            raise McpConnectionError(
+                f"cannot {operation}: server connection closed ({exc})"
+            ) from exc
         except TimeoutError as exc:
             raise McpTimeoutError(
                 f"{operation} timed out after {self._settings.request_timeout_seconds}s"
@@ -294,3 +481,5 @@ class McpClient:
             raise McpRpcError(
                 exc.error.message, code=exc.error.code, data=exc.error.data
             ) from exc
+        finally:
+            self._request_scopes.discard(scope)

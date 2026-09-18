@@ -22,7 +22,8 @@ class McpError(Exception):
 
 
 class McpConnectionError(McpError):
-    """The server could not be reached or spawned."""
+    """The server could not be reached, was spawned but died mid-session,
+    or dropped unexpectedly. ``restart()`` may recover a dead connection."""
 
 
 class McpNotConnectedError(McpError):

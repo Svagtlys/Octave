@@ -67,7 +67,7 @@ Implements the Model Context Protocol client, enabling Octave to discover, manag
 **Responsibilities:**
 - **JSON-RPC 2.0 Client Core** — Typed `McpClient` façade (`octave.mcp`) over the official `mcp` Python SDK: framing, request-ID correlation, initialize handshake, error translation
 - **Transport Support** — stdio (subprocess) and Streamable HTTP behind `open_transport`; legacy SSE deliberately not wrapped
-- **Server Lifecycle Manager** — Start, stop, restart, and health-monitor connected MCP servers
+- **Connection Lifecycle** — Start and manual restart (`McpClient.restart()`) with `is_connected` liveness; subprocess exit detected via transport-stream monitoring (fail-fast `McpConnectionError`). Auto-restart policy and health monitoring land with the server lifecycle manager (roadmap #4)
 - **Tool Discovery & Caching** — Fetches tool schemas and descriptions from servers; caches for fast lookup
 - **Tool Execution Engine** — Invokes tools with arguments, handles responses and errors, enforces timeouts
 - **Configuration Persistence** — Stores server connection configs in the unified database

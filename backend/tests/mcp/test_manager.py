@@ -166,3 +166,109 @@ class TestRegistry:
                 manager.register(id="b", name="late", config=_CONFIG)
         finally:
             await manager.stop_all()
+
+
+class TestSupervision:
+    async def test_start_all_connects_and_stop_all_closes(self) -> None:
+        manager, factory = make_manager("a", "b")
+        await manager.start_all()
+        try:
+            await wait_for(manager, "a", lambda s: s.state == "connected")
+            await wait_for(manager, "b", lambda s: s.state == "connected")
+        finally:
+            await manager.stop_all()
+        assert manager.status_of("a").state == "stopped"
+        assert manager.status_of("b").state == "stopped"
+        assert all(c.aclose_calls >= 1 for c in factory.clients)
+
+    async def test_death_triggers_auto_restart(self) -> None:
+        manager, factory = make_manager("a")
+        await manager.start_all()
+        try:
+            await wait_for(manager, "a", lambda s: s.state == "connected")
+            factory.clients[0].die()
+            # Predicate on restart_count, not bare state: the supervisor
+            # passes through connected→restarting→connected and a bare
+            # "connected" wait could return before it even wakes.
+            status = await wait_for(
+                manager, "a", lambda s: s.state == "connected" and s.restart_count == 1
+            )
+            assert status.consecutive_failures == 1  # not reset yet
+        finally:
+            await manager.stop_all()
+
+    async def test_connect_failure_backs_off_then_crashes(self) -> None:
+        manager, factory = make_manager("a")
+        factory.clients[0].connect_error = McpConnectionError("boom")
+        await manager.start_all()
+        try:
+            status = await wait_for(manager, "a", lambda s: s.state == "crashed")
+            assert status.consecutive_failures == FAST.restart_max_attempts
+            assert "boom" in (status.last_error or "")
+            # initial attempt + restart_max_attempts retries, no more:
+            assert factory.clients[0].connect_calls == 1 + FAST.restart_max_attempts
+        finally:
+            await manager.stop_all()
+
+    async def test_stop_cancels_supervisor_mid_backoff(self) -> None:
+        factory = FakeFactory()
+        manager = McpServerManager(settings=FAST, client_factory=fail_after_first(factory))
+        manager.register(id="a", name="a", config=_CONFIG)
+        await manager.start_all()
+        await wait_for(manager, "a", lambda s: s.state == "connected")
+        factory.clients[0].die()  # supervisor enters backoff; retries all fail
+        # FAST backoff totals ~70ms before crash — accept either mid-cycle
+        # state; the point is stop() works while the supervisor is busy.
+        await wait_for(manager, "a", lambda s: s.state in ("restarting", "crashed"))
+        await manager.stop("a")
+        status = await wait_for(manager, "a", lambda s: s.state == "stopped")
+        assert status.state == "stopped"
+        assert factory.clients[0].aclose_calls >= 1  # shielded finally ran
+
+    async def test_manual_restart_on_stopped_raises(self) -> None:
+        manager, _factory = make_manager("a")
+        with pytest.raises(McpNotConnectedError):
+            await manager.restart("a")
+
+    async def test_manual_restart_exits_crashed(self) -> None:
+        factory = FakeFactory()
+        manager = McpServerManager(settings=FAST, client_factory=fail_after_first(factory))
+        manager.register(id="a", name="a", config=_CONFIG)
+        await manager.start_all()
+        factory.clients[0].die()
+        status = await wait_for(manager, "a", lambda s: s.state == "crashed")
+        assert status.consecutive_failures == FAST.restart_max_attempts
+        # Recovery: clear the scripted failure, manual restart cycles.
+        factory.clients[0].connect_error = None
+        await manager.restart("a")
+        status = await wait_for(
+            manager, "a", lambda s: s.state == "connected" and s.consecutive_failures == 0
+        )
+        assert status.restart_count >= 1
+        await manager.stop_all()
+
+    async def test_supervisor_exception_contains_to_crashed(self) -> None:
+        factory = FakeFactory()
+        manager = McpServerManager(settings=FAST, client_factory=factory)
+        manager.register(id="a", name="a", config=_CONFIG)
+        factory.clients[0].connect_error = RuntimeError("manager bug")
+        await manager.start_all()
+        try:
+            status = await wait_for(manager, "a", lambda s: s.state == "crashed")
+            assert status.state == "crashed"
+        finally:
+            await manager.stop_all()
+
+    async def test_multi_server_independence(self) -> None:
+        manager, factory = make_manager("bad", "good")
+        factory.clients[0].connect_error = McpConnectionError("bad binary")
+        await manager.start_all()
+        try:
+            await wait_for(manager, "bad", lambda s: s.state == "crashed")
+            await wait_for(manager, "good", lambda s: s.state == "connected")
+            factory.clients[1].die()  # 'good' recovers despite 'bad' crashed
+            await wait_for(
+                manager, "good", lambda s: s.state == "connected" and s.restart_count == 1
+            )
+        finally:
+            await manager.stop_all()

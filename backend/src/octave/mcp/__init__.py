@@ -7,7 +7,7 @@ never cross this boundary.
 
 from octave.mcp.client import McpClient
 from octave.mcp.config import HttpConfig, McpSettings, ServerConfig, StdioConfig
-from octave.mcp.deps import get_mcp_client
+from octave.mcp.deps import get_mcp_manager
 from octave.mcp.errors import (
     McpConfigError,
     McpConnectionError,
@@ -16,6 +16,7 @@ from octave.mcp.errors import (
     McpRpcError,
     McpTimeoutError,
 )
+from octave.mcp.manager import McpServerManager, ServerState, ServerStatus
 from octave.mcp.types import (
     Notification,
     ServerInfo,
@@ -32,14 +33,17 @@ __all__ = [
     "McpError",
     "McpNotConnectedError",
     "McpRpcError",
+    "McpServerManager",
     "McpSettings",
     "McpTimeoutError",
     "Notification",
     "ServerConfig",
     "ServerInfo",
+    "ServerState",
+    "ServerStatus",
     "StdioConfig",
     "ToolContent",
     "ToolInfo",
     "ToolResult",
-    "get_mcp_client",
+    "get_mcp_manager",
 ]

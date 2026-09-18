@@ -1,24 +1,27 @@
-"""FastAPI dependency resolver for the MCP client.
+"""FastAPI dependency resolver for the MCP server manager.
 
-Thin seam by design (spec decision 5): the lifecycle manager (roadmap #4)
-will populate ``app.state.mcp_client`` via a lifespan once server configs
-exist. This module only proves the seam resolves.
+Thin seam (spec decision 4): ``mcp_lifespan`` publishes
+``app.state.mcp_manager``; routes resolve through it and pick servers with
+``manager.get_client(id)``. ``get_mcp_client`` was removed in #18 — with N
+servers it cannot resolve "the" client.
 """
 
 from fastapi import HTTPException, Request
 
-from octave.mcp.client import McpClient
+from octave.mcp.manager import McpServerManager
 
-__all__ = ["get_mcp_client"]
+__all__ = ["get_mcp_manager"]
 
 
-async def get_mcp_client(request: Request) -> McpClient:
-    """Resolve the app-wide MCP client from ``app.state.mcp_client``.
+async def get_mcp_manager(request: Request) -> McpServerManager:
+    """Resolve the app-wide manager from ``app.state.mcp_manager``.
 
-    Raises 503 while no client is configured — Octave boots fine without
+    Raises 503 while no manager is configured — Octave boots fine without
     any MCP servers.
     """
-    client: McpClient | None = getattr(request.app.state, "mcp_client", None)
-    if client is None:
-        raise HTTPException(status_code=503, detail="MCP client not configured")
-    return client
+    manager: McpServerManager | None = getattr(
+        request.app.state, "mcp_manager", None
+    )
+    if manager is None:
+        raise HTTPException(status_code=503, detail="MCP manager not configured")
+    return manager

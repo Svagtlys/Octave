@@ -80,7 +80,9 @@ class _ManagedServer:
     """Latest on_lost signal: ``"death"`` wins over ``"timeout"``."""
 
     cmd_restart: bool = False
-    scope: anyio.CancelScope | None = None
+    stop_requested: bool = False
+    """Cooperative stop flag; checked at every park point and loop head."""
+
     stable_deadline: float = 0.0
     """anyio clock time after which the failure counter may reset."""
 
@@ -187,12 +189,17 @@ class McpServerManager:
                 await self.start(rec.id)
 
     async def stop_all(self) -> None:
-        """Cancel every supervisor and await teardown."""
+        """Request stop on every supervisor and await teardown.
+
+        Each supervisor unwinds at its next checkpoint (park, backoff
+        boundary, or loop head); the awaited task-group exit guarantees
+        every ``aclose()`` finished before returning.
+        """
         if self._task_group is None:
             return
         for rec in self._servers.values():
-            if rec.scope is not None:
-                rec.scope.cancel()
+            rec.stop_requested = True
+            rec.wake.set()
         task_group, self._task_group = self._task_group, None
         await task_group.__aexit__(None, None, None)
 
@@ -203,17 +210,24 @@ class McpServerManager:
         rec = self._require(id)
         if rec.state != "stopped":
             raise McpError(f"server {id} already started (state={rec.state})")
-        rec.scope = anyio.CancelScope()
+        rec.stop_requested = False
+        rec.wake = anyio.Event()  # drop any wake signal from a prior run
         self._task_group.start_soon(self._supervise, rec)
 
     async def stop(self, id: str) -> None:
-        """Cancel a supervisor; its ``finally`` block closes the client.
+        """Request a supervisor stop; its ``finally`` block closes the client.
 
-        Cancellation *is* the stop mechanism, so stop/restart cannot race.
+        Cooperative rather than cancellation-based: a live connection holds
+        SDK cancel scopes opened in the supervisor task (transport and
+        session), and cross-task cancellation delivered into that nesting
+        corrupts anyio's per-task scope stack on teardown. The flag + wake
+        give the same observable semantics: the supervisor unwinds at its
+        next checkpoint and awaited joins happen via ``stop_all``. Stop
+        wins over a concurrent ``restart`` (checked first on wake).
         """
         rec = self._require(id)
-        if rec.scope is not None:
-            rec.scope.cancel()
+        rec.stop_requested = True
+        rec.wake.set()
 
     async def restart(self, id: str) -> None:
         """Supervisor-driven restart cycle; resets the failure counter.
@@ -228,12 +242,24 @@ class McpServerManager:
         rec.wake.set()
 
     async def _supervise(self, rec: _ManagedServer) -> None:
-        """Task body wrapper: the shielded teardown is the stop mechanism."""
+        """Task body wrapper: the ``finally`` teardown is the stop mechanism.
+
+        ``aclose()`` must run **unshielded**: a live connection owns SDK
+        cancel scopes entered by ``connect()`` in this task, and wrapping
+        the teardown in any new scope (e.g. a shield) would violate
+        anyio's LIFO scope nesting when the exit stack unwinds them.
+        Stopping is cooperative (flag + wake), so nothing cancels this
+        task mid-teardown in normal operation; task-group-level
+        cancellation (app shutdown) simply propagates and the event loop
+        reaps the subprocess.
+        """
         try:
             await self._run_server_loop(rec)
         finally:
-            with anyio.CancelScope(shield=True):
+            try:
                 await rec.client.aclose()
+            except Exception:
+                logger.exception("MCP teardown failed | id=%s", rec.id)
             self._set_state(rec, "stopped")
 
     async def _run_server_loop(self, rec: _ManagedServer) -> None:
@@ -247,65 +273,71 @@ class McpServerManager:
         """
         settings = self._settings
         started = False
-        with rec.scope:
-            while True:
-                try:
-                    if not started:
-                        started = True
-                        self._set_state(rec, "starting")
-                        if await self._attempt_connect(rec):
-                            self._mark_connected(rec, count_restart=False)
-                            continue  # healthy: park on wake, not the restart path
-                        self._set_state(rec, "restarting")
-                    elif rec.state in ("connected", "crashed"):
-                        await rec.wake.wait()
-                        rec.wake = anyio.Event()
-                        reason, cmd = rec.reason, rec.cmd_restart
-                        rec.reason, rec.cmd_restart = None, False
-                        if rec.state == "connected":
-                            if anyio.current_time() >= rec.stable_deadline:
-                                rec.consecutive_failures = 0
-                            if reason == "timeout" and not cmd:
-                                if await self._probe_ok(rec):
-                                    continue  # healthy-but-slow: keep serving
-                        if cmd:
+        cmd = False
+        while True:
+            if rec.stop_requested:
+                break
+            try:
+                if not started:
+                    started = True
+                    self._set_state(rec, "starting")
+                    if await self._attempt_connect(rec):
+                        self._mark_connected(rec, count_restart=False)
+                        continue  # healthy: park on wake, not the restart path
+                    self._set_state(rec, "restarting")
+                elif rec.state in ("connected", "crashed"):
+                    await rec.wake.wait()
+                    rec.wake = anyio.Event()
+                    if rec.stop_requested:
+                        break
+                    reason, cmd = rec.reason, rec.cmd_restart
+                    rec.reason, rec.cmd_restart = None, False
+                    if rec.state == "connected":
+                        if anyio.current_time() >= rec.stable_deadline:
                             rec.consecutive_failures = 0
-                        self._set_state(rec, "restarting")
-                    await rec.client.aclose()
-                    while rec.consecutive_failures < settings.restart_max_attempts:
-                        rec.consecutive_failures += 1
-                        delay = min(
-                            settings.restart_base_delay_seconds
-                            * 2 ** (rec.consecutive_failures - 1),
-                            settings.restart_max_delay_seconds,
-                        )
-                        logger.warning(
-                            "restarting MCP server | id=%s attempt=%s delay=%.2fs",
-                            rec.id,
-                            rec.consecutive_failures,
-                            delay,
-                        )
-                        await anyio.sleep(delay)
-                        if await self._attempt_connect(rec):
-                            if cmd:
-                                # Manual restart fully resets the failure
-                                # streak (spec: restart(id) resets the counter).
-                                rec.consecutive_failures = 0
-                            self._mark_connected(rec, count_restart=True)
-                            break
-                    else:
-                        logger.error(
-                            "MCP server crashed | id=%s attempts=%s last_error=%s",
-                            rec.id,
-                            settings.restart_max_attempts,
-                            rec.last_error,
-                        )
-                        self._set_state(rec, "crashed")
-                except Exception:
-                    logger.exception(
-                        "MCP supervisor failure contained | id=%s", rec.id
+                        if reason == "timeout" and not cmd:
+                            if await self._probe_ok(rec):
+                                continue  # healthy-but-slow: keep serving
+                    if cmd:
+                        rec.consecutive_failures = 0
+                    self._set_state(rec, "restarting")
+                await rec.client.aclose()
+                while rec.consecutive_failures < settings.restart_max_attempts:
+                    if rec.stop_requested:
+                        break  # stop wins over retrying; skips the else
+                    rec.consecutive_failures += 1
+                    delay = min(
+                        settings.restart_base_delay_seconds
+                        * 2 ** (rec.consecutive_failures - 1),
+                        settings.restart_max_delay_seconds,
+                    )
+                    logger.warning(
+                        "restarting MCP server | id=%s attempt=%s delay=%.2fs",
+                        rec.id,
+                        rec.consecutive_failures,
+                        delay,
+                    )
+                    await anyio.sleep(delay)
+                    if await self._attempt_connect(rec):
+                        if cmd:
+                            # Manual restart fully resets the failure
+                            # streak (spec: restart(id) resets the counter).
+                            rec.consecutive_failures = 0
+                        self._mark_connected(rec, count_restart=True)
+                        break
+                else:
+                    logger.error(
+                        "MCP server crashed | id=%s attempts=%s last_error=%s",
+                        rec.id,
+                        settings.restart_max_attempts,
+                        rec.last_error,
                     )
                     self._set_state(rec, "crashed")
+            except Exception:
+                logger.exception(
+                    "MCP supervisor failure contained | id=%s", rec.id
+                )
+                self._set_state(rec, "crashed")
 
     async def _attempt_connect(self, rec: _ManagedServer) -> bool:
         """One connect try; McpError failures recorded, never raised to the loop."""

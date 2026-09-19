@@ -67,3 +67,68 @@ async def test_subprocess_exit_is_captured_and_restart_recovers() -> None:
         assert result.content[0].text == "reborn"
     finally:
         await client.aclose()
+
+
+async def test_manager_auto_restarts_real_subprocess() -> None:
+    """Death mid-call → supervisor respawns → tool round-trips again."""
+    from octave.mcp.config import McpSettings as _Settings
+    from octave.mcp.manager import McpServerManager
+    from tests.mcp.test_manager import wait_for
+
+    settings = _Settings(
+        request_timeout_seconds=10.0,
+        restart_base_delay_seconds=0.1,
+        restart_max_attempts=3,
+    )
+    manager = McpServerManager(settings=settings)
+    manager.register(
+        id="dying",
+        name="Dying",
+        config=StdioConfig(command=sys.executable, args=[str(_DYING_SERVER)]),
+    )
+    await manager.start_all()
+    try:
+        await wait_for(
+            manager, "dying", lambda s: s.state == "connected", timeout=15
+        )
+        client = manager.get_client("dying")
+        with pytest.raises(McpConnectionError):
+            await client.call_tool("exit_now")
+        # Supervisor notices death and auto-restarts (predicate on
+        # restart_count so we don't observe the pre-reaction connected).
+        await wait_for(
+            manager,
+            "dying",
+            lambda s: s.state == "connected" and s.restart_count >= 1,
+            timeout=15,
+        )
+        result = await client.call_tool("echo", {"text": "auto-reborn"})
+        assert result.content[0].text == "auto-reborn"
+    finally:
+        await manager.stop_all()
+
+
+async def test_manager_crashes_on_unstartable_server_without_blocking_app() -> None:
+    """A bad binary exhausts backoff into 'crashed'; stop_all stays clean."""
+    from octave.mcp.config import McpSettings as _Settings
+    from octave.mcp.manager import McpServerManager
+    from tests.mcp.test_manager import wait_for
+
+    settings = _Settings(
+        restart_base_delay_seconds=0.01,
+        restart_max_delay_seconds=0.05,
+        restart_max_attempts=2,
+    )
+    manager = McpServerManager(settings=settings)
+    manager.register(
+        id="bad",
+        name="Bad",
+        config=StdioConfig(command="/nonexistent/octave-test-binary"),
+    )
+    await manager.start_all()
+    try:
+        await wait_for(manager, "bad", lambda s: s.state == "crashed", timeout=15)
+        assert manager.status_of("bad").consecutive_failures == 2
+    finally:
+        await manager.stop_all()
+    assert manager.status_of("bad").state == "stopped"

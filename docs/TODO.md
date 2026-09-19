@@ -75,7 +75,7 @@
 - [ ] 1. Implement MCP client core (JSON-RPC 2.0 transport layer)
 - [x] 2. Add MCP stdio transport support (spawn subprocess servers) — PR #81 (transport behind `open_transport`) + PR #91 (subprocess exit capture, manual restart); config persistence + Settings UI wiring deferred to #7/UI
 - [ ] 3. Add MCP HTTP/SSE transport support (remote server connections) — reduced by PR #81 to config persistence + Settings UI wiring; Streamable HTTP exists behind `open_transport` (legacy SSE deliberately not wrapped)
-- [ ] 4. Build server lifecycle manager (start, stop, restart, health monitoring)
+- [x] 4. Build server lifecycle manager (start, stop, restart, health monitoring) — PR #93 (per-server supervisors, backoff + crash-loop, probe-on-timeout; REST surface deferred to MCP Connector UI)
 - [ ] 5. Implement tool discovery and caching (fetch tools, schemas, descriptions)
 - [ ] 6. Create tool execution engine (invoke tools, handle responses/errors, timeouts)
 - [ ] 7. Add MCP server configuration persistence (store server configs in the unified database)

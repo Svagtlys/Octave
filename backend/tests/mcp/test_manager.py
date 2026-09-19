@@ -212,7 +212,9 @@ class TestSupervision:
 
     async def test_stop_cancels_supervisor_mid_backoff(self) -> None:
         factory = FakeFactory()
-        manager = McpServerManager(settings=FAST, client_factory=fail_after_first(factory))
+        manager = McpServerManager(
+            settings=FAST, client_factory=fail_after_first(factory)
+        )
         manager.register(id="a", name="a", config=_CONFIG)
         await manager.start_all()
         await wait_for(manager, "a", lambda s: s.state == "connected")
@@ -232,7 +234,9 @@ class TestSupervision:
 
     async def test_manual_restart_exits_crashed(self) -> None:
         factory = FakeFactory()
-        manager = McpServerManager(settings=FAST, client_factory=fail_after_first(factory))
+        manager = McpServerManager(
+            settings=FAST, client_factory=fail_after_first(factory)
+        )
         manager.register(id="a", name="a", config=_CONFIG)
         await manager.start_all()
         factory.clients[0].die()
@@ -242,7 +246,9 @@ class TestSupervision:
         factory.clients[0].connect_error = None
         await manager.restart("a")
         status = await wait_for(
-            manager, "a", lambda s: s.state == "connected" and s.consecutive_failures == 0
+            manager,
+            "a",
+            lambda s: s.state == "connected" and s.consecutive_failures == 0,
         )
         assert status.restart_count >= 1
         await manager.stop_all()
@@ -322,7 +328,9 @@ class TestProbeAndStabilization:
             await wait_for(manager, "good", lambda s: s.state == "connected")
             factory.clients[1].die()  # 'good' recovers despite 'bad' crashed
             await wait_for(
-                manager, "good", lambda s: s.state == "connected" and s.restart_count == 1
+                manager,
+                "good",
+                lambda s: s.state == "connected" and s.restart_count == 1,
             )
         finally:
             await manager.stop_all()

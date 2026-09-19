@@ -16,7 +16,7 @@ manually so it outlives the call.
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 
 import anyio
@@ -72,9 +72,7 @@ class _ManagedServer:
     restart_count: int = 0
     consecutive_failures: int = 0
     last_error: str | None = None
-    last_state_change: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    last_state_change: datetime = field(default_factory=lambda: datetime.now(UTC))
     wake: anyio.Event = field(default_factory=anyio.Event)
     reason: str | None = None
     """Latest on_lost signal: ``"death"`` wins over ``"timeout"``."""
@@ -119,13 +117,15 @@ class McpServerManager:
             raise McpError("cannot register after start_all()")
         if id in self._servers:
             raise McpConfigError(f"duplicate server id: {id}")
+
+        def hook(reason: str) -> None:
+            self._on_lost(id, reason)
+
         self._servers[id] = _ManagedServer(
             id=id,
             name=name,
             config=config,
-            client=self._client_factory(
-                lambda reason, _id=id: self._on_lost(_id, reason)
-            ),
+            client=self._client_factory(hook),
         )
 
     def _on_lost(self, id: str, reason: str) -> None:
@@ -170,7 +170,7 @@ class McpServerManager:
 
     def _set_state(self, rec: _ManagedServer, state: ServerState) -> None:
         rec.state = state
-        rec.last_state_change = datetime.now(timezone.utc)
+        rec.last_state_change = datetime.now(UTC)
         logger.info("MCP server state | id=%s state=%s", rec.id, state)
 
     async def start_all(self) -> None:

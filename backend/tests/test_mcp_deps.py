@@ -1,19 +1,25 @@
-"""get_mcp_client resolver: app.state lookup, overrides, 503 when unset."""
+"""get_mcp_manager resolver: app.state lookup, overrides, 503 when unset.
+
+get_mcp_client was removed in #18: with N managed servers it cannot resolve
+"the" client — consumers pick a server via manager.get_client(id).
+"""
 
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from octave.mcp.client import McpClient
-from octave.mcp.deps import get_mcp_client
+from octave.mcp.deps import get_mcp_manager
+from octave.mcp.manager import McpServerManager
 
 
 def _probe_app() -> FastAPI:
-    """A minimal app whose only route depends on the MCP client."""
+    """A minimal app whose only route depends on the manager."""
     app = FastAPI()
 
     @app.get("/probe")
-    async def _probe(client: McpClient = Depends(get_mcp_client)) -> dict[str, str]:
-        return {"client": type(client).__name__}
+    async def _probe(
+        manager: McpServerManager = Depends(get_mcp_manager),
+    ) -> dict[str, str]:
+        return {"manager": type(manager).__name__}
 
     return app
 
@@ -21,23 +27,31 @@ def _probe_app() -> FastAPI:
 def test_unset_state_returns_503() -> None:
     response = TestClient(_probe_app()).get("/probe")
     assert response.status_code == 503
-    assert response.json()["detail"] == "MCP client not configured"
+    assert response.json()["detail"] == "MCP manager not configured"
 
 
-def test_state_provides_client() -> None:
+def test_state_provides_manager() -> None:
     app = _probe_app()
-    app.state.mcp_client = McpClient()  # never connected — resolver only wires DI
+    app.state.mcp_manager = McpServerManager()
     response = TestClient(app).get("/probe")
     assert response.status_code == 200
-    assert response.json() == {"client": "McpClient"}
+    assert response.json() == {"manager": "McpServerManager"}
 
 
 def test_dependency_override_wins() -> None:
-    class FakeMcpClient(McpClient):
+    class FakeManager(McpServerManager):
         """No-op stand-in proving routes resolve through the override seam."""
 
     app = _probe_app()
-    app.dependency_overrides[get_mcp_client] = lambda: FakeMcpClient()
+    app.dependency_overrides[get_mcp_manager] = lambda: FakeManager()
     response = TestClient(app).get("/probe")
     assert response.status_code == 200
-    assert response.json() == {"client": "FakeMcpClient"}
+    assert response.json() == {"manager": "FakeManager"}
+
+
+def test_get_mcp_client_is_gone() -> None:
+    import octave.mcp
+    import octave.mcp.deps
+
+    assert not hasattr(octave.mcp, "get_mcp_client")
+    assert not hasattr(octave.mcp.deps, "get_mcp_client")

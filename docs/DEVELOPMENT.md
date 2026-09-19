@@ -197,6 +197,20 @@ SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 This *adds* to certifi's bundle rather than replacing it, so public HTTPS
 endpoints keep working. Verify any setup with `backend/scripts/smoke_inference.py`.
 
+#### MCP Server Supervision
+
+The MCP layer (`octave.mcp`) reads `OCTAVE_MCP_*` variables via
+`McpSettings` in `backend/src/octave/mcp/config.py`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `OCTAVE_MCP_REQUEST_TIMEOUT_SECONDS` | `30.0` | Per-request timeout for client calls (and the initialize handshake) |
+| `OCTAVE_MCP_RESTART_BASE_DELAY_SECONDS` | `1.0` | First auto-restart delay; exponential backoff multiplies by 2 per attempt |
+| `OCTAVE_MCP_RESTART_MAX_DELAY_SECONDS` | `60.0` | Cap on the backoff delay |
+| `OCTAVE_MCP_RESTART_MAX_ATTEMPTS` | `5` | Consecutive failed restart cycles before a server enters `crashed` |
+| `OCTAVE_MCP_PROBE_TIMEOUT_SECONDS` | `5.0` | Budget for the manager's confirming ping after a request timeout |
+| `OCTAVE_MCP_STABILIZATION_SECONDS` | `60.0` | Time a connection must hold before the failure counter resets |
+
 ### Frontend Environment
 
 The frontend uses Vite's environment variable convention. Create `frontend/.env` for local development:

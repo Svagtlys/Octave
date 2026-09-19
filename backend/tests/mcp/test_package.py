@@ -6,6 +6,9 @@ import octave.mcp as mcp_pkg
 def test_public_names_are_exported() -> None:
     for name in (
         "McpClient",
+        "McpServerManager",
+        "ServerState",
+        "ServerStatus",
         "McpSettings",
         "StdioConfig",
         "HttpConfig",
@@ -20,7 +23,7 @@ def test_public_names_are_exported() -> None:
         "McpNotConnectedError",
         "McpTimeoutError",
         "McpConfigError",
-        "get_mcp_client",
+        "get_mcp_manager",
     ):
         assert hasattr(mcp_pkg, name), name
 

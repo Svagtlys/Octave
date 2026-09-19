@@ -12,8 +12,7 @@ Octave is a **local-first agent harness** that acts as a proactive personal assi
 
 **Core principles:**
 
-- **Local-first** — all data stays on-prem. No mandatory external API calls beyond your own configured inference engine (Ollama, vLLM, llama.cpp, LM Studio, or any OpenAI-compatible server).
-- **MCP as the universal abstraction** — every integration connects via MCP. No hardcoded integrations.
+- **Local-first** — all data stays on-prem. No mandatory external API calls beyond your own configured inference engine.
 - **Swappable components** — no built-in scheduler, file watcher, or vector DB. Everything is a pluggable adapter or an MCP server.
 - **User-owned knowledge** — your knowledge base lives outside Octave, managed by your chosen MCP servers.
 

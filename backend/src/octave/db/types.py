@@ -1,6 +1,7 @@
 """Octave DB domain types.
 
-``events.kind`` and ``sessions.status`` are TEXT columns: the enums here are
+``events.kind``, ``sessions.status``, and ``vault_items.kind`` are TEXT
+columns: the enums here are
 the app-level validation layer. A DB ``CHECK`` would force an ``ALTER TABLE``
 (a table rebuild on SQLite) for every new kind, so the enum is deliberately
 the single source of truth and grows freely.
@@ -19,6 +20,7 @@ __all__ = [
     "AssistantMessagePayload",
     "EventKind",
     "UserMessagePayload",
+    "VaultKind",
     "VectorHit",
 ]
 
@@ -31,6 +33,21 @@ class EventKind(StrEnum):
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     SYSTEM = "system"
+
+
+class VaultKind(StrEnum):
+    """One vault item's type. Values are stored verbatim in ``vault_items.kind``.
+
+    App-level validation layer (see module docstring): the enum grows freely —
+    a new kind costs one member, no migration. Conventions per kind live in
+    the context vault data model design spec.
+    """
+
+    SKILL = "skill"
+    PROMPT = "prompt"
+    PREFERENCE = "preference"
+    RUN_SUMMARY = "run_summary"
+    RUN_RECORD = "run_record"
 
 
 @dataclass(frozen=True)

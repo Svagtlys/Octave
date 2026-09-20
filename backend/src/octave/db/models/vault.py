@@ -26,7 +26,8 @@ __all__ = ["VaultItem"]
 
 
 class VaultItem(Base):
-    """One vault entry: skill | prompt | preference | agent_state."""
+    """One vault entry — see ``VaultKind``: skill | prompt | preference |
+    run_summary | run_record."""
 
     __tablename__ = "vault_items"
     __table_args__ = (Index("ix_vault_items_user_kind", "user_id", "kind"),)

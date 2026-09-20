@@ -7,6 +7,7 @@ from octave.db.types import (
     AssistantMessagePayload,
     EventKind,
     UserMessagePayload,
+    VaultKind,
     VectorHit,
 )
 
@@ -44,3 +45,31 @@ def test_message_payloads_require_content() -> None:
 
 def test_assistant_payload_model_is_optional() -> None:
     assert AssistantMessagePayload(content="x").model_name is None
+
+
+def test_vault_kind_wire_values() -> None:
+    assert VaultKind.SKILL == "skill"
+    assert VaultKind.PROMPT == "prompt"
+    assert VaultKind.PREFERENCE == "preference"
+    assert VaultKind.RUN_SUMMARY == "run_summary"
+    assert VaultKind.RUN_RECORD == "run_record"
+
+
+def test_vault_kind_rejects_unknown_value() -> None:
+    with pytest.raises(ValueError):
+        VaultKind("agent_state")
+
+
+def test_vault_kind_revalidates_stored_text() -> None:
+    """``vault_items.kind`` is TEXT in the DB; the enum is the app-level guard."""
+    assert VaultKind(VaultKind.RUN_RECORD.value) is VaultKind.RUN_RECORD
+
+
+def test_vault_kind_membership_is_exhaustive() -> None:
+    assert {kind.value for kind in VaultKind} == {
+        "skill",
+        "prompt",
+        "preference",
+        "run_summary",
+        "run_record",
+    }

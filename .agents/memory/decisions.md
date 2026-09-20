@@ -83,6 +83,8 @@ Each decision follows this structure:
 - Rebuild process needed when KB changes
 - Context Vault is read-only (edits go to KB source)
 
+**Amendment (2026-09-20):** Superseded on one point — the shipped schema treats `vault_items.content` as canonical for injectable context; the vault is not a purely derived, read-only index. Externally-owned (KB/MCP-populated) items, if they arrive with the Context Manager's vault-builder work item, will carry their own provenance semantics. See the 2026-09-20 Context Vault Data Model ADR below.
+
 ### 2026-09-13 — Adapter-Style Database Engine Seam
 
 **Context:** The architecture names both SQLite+vec0 and PostgreSQL+pgvector. We need one supported engine now without locking the schema to it, and the inference package already has a proven adapter pattern.
@@ -112,3 +114,18 @@ Each decision follows this structure:
 **Rationale:** A `CHECK` on `kind` would force a table rebuild per new kind on SQLite. Ownership and participation are different axes — conflating them breaks the moment a session has two humans.
 
 **Consequences:** Multi-party/A2A/autonomous sessions are *reachable* without re-modeling, but no orchestration behavior ships: no `mode`, `driver_participant_id`, or `turn_policy` column (deferred, with rationale, to the multi-agent work item). Multi-human sessions raise an unresolved vault-visibility question, tracked as a follow-up issue.
+
+### 2026-09-20 — Context Vault Data Model: Thin Envelope, Five Kinds, Two-Tier Run Archival
+
+**Context:** Issue #31 asks for vault item schemas (skills, prompts, preferences, agent state) plus relationships and foreign keys. The `vault_items` table already shipped (PR #84) with `content` as source of truth and a `metadata` JSON column; the 2026-09-13 design deferred link tables to consumer work items. The `agent_state` name was rejected in review: the kind is an archived, searchable record of a completed agent run, not live state.
+
+**Options Considered:**
+1. Structured JSON in `content` for machine kinds — breaks the invariant that `content` is what gets embedded and injected
+2. Markdown + frontmatter in `content` — echoes this ADR's 2026-06-27 KB-files convention but conflicts with the shipped `metadata` column and pollutes embeddings unless stripped
+3. Thin envelope — `content` is 100% injectable prose; all structure lives in `metadata` as documented conventions
+
+**Decision:** Option 3. `VaultKind` (in `octave.db.types`) ships as the app-level validator for `vault_items.kind`: `skill | prompt | preference | run_summary | run_record` — `agent_state` renamed before any enum existed in code. Relationships are named references in `metadata` (`tags`, `links`, skill `params`, run provenance `session_id`/`agent_id`/`seq_range`); link tables (`skill_links`, `vault_tags`, `model_tags`, `injection_rules`) stay deferred to their consumer work items with trigger conditions recorded. Run archival is two-tier: one `run_summary` item per run (headline prose; Tier-1 "which run?" search) plus N `run_record` items (verbatim transcript chunks; Tier-2 search scoped by `metadata.session_id`).
+
+**Rationale:** `content` is simultaneously the embedded text, the injected prompt text, and the re-embedding source of truth — non-prose structure inside it degrades embeddings and injection alike. Summaries alone lose crucial steps; one vector over a whole run retrieves badly. Tiering keeps the Tier-1 corpus small and precise while Tier 2 surfaces verbatim text. `kind` is an indexed column (`ix_vault_items_user_kind`), so tier filtering is cheap; `metadata` is a JSON blob — hence a fifth kind rather than a `meta.role` flag.
+
+**Consequences:** The vault is canonical for injectable context (amends the 2026-06-27 decision above). Per-kind Pydantic validation models, chunking policy, archival triggers/dedup, and scoped vector search in `DbAdapter.search_similar` are explicitly deferred to the Context Manager storage/lifecycle work items — this decision records the requirements they must serve. Extra `metadata` keys are allowed, so future consumers extend conventions without coordination; the storage layer validates with `extra="allow"`.

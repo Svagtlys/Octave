@@ -60,7 +60,7 @@ erDiagram
   VAULT_ITEM {
     string id PK
     string user_id FK
-    string kind "skill | prompt | preference | agent_state"
+    string kind "skill | prompt | preference | run_summary | run_record"
     string name
     text content "source of truth"
     json metadata "tags live here"
@@ -97,3 +97,9 @@ erDiagram
 
 Planned, not yet created (additive migrations in their consumer work items):
 `SKILL_LINK`, `TOOL_TAG`, `MODEL_TAG`, `TOOLS`, `INJECTION_RULES`.
+
+Vault item structure conventions (`metadata` tags, links, skill params, run
+provenance) are documented in the
+[context vault data model design](../../.agents/specs/2026-09-20-context-vault-data-model-design.md).
+Run archival is two-tier: `run_summary` (Tier 1 — "which run?") then
+`run_record` (Tier 2 — verbatim chunks), linked by `metadata.session_id`.

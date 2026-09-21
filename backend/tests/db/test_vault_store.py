@@ -271,3 +271,29 @@ async def test_list_items_filters_and_pages(
         assert len(page) == 2
         all_items = await store.list_items(user_id="u_1")
         assert len(all_items) == 4
+
+
+async def test_rollback_leaves_vec_table_and_row_clean(
+    env: tuple[SqliteVecAdapter, async_sessionmaker]
+) -> None:
+    """Row + mirror share the session transaction: rollback undoes BOTH."""
+    adapter, factory = env
+    from octave.db.vault_store import VaultStore
+
+    async with factory() as session:
+        store = VaultStore(adapter, session)
+        await store.upsert(
+            item_id="v_1", user_id="u_1", kind=VaultKind.SKILL,
+            name="x", content="c", embedding=_unit(0),
+        )
+        await session.rollback()
+
+    async with factory() as session:
+        store = VaultStore(adapter, session)
+        assert await store.get("v_1") is None
+        vec_count = (
+            await session.execute(
+                text(f"SELECT count(*) FROM {vector_table_name(DIM)}")
+            )
+        ).scalar_one()
+        assert vec_count == 0

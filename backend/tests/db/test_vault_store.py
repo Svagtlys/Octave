@@ -65,7 +65,6 @@ async def test_upsert_without_embedding_persists_row(
         assert item.embedding is None
         assert item.embedding_dim is None
         assert item.embedding_model is None
-        pytest.skip("search: Task 6")  # noqa: PT023 -- remove in Task 6
         hits = await store.search(user_id="u_1", embedding=_unit(0))
         assert hits == []  # findable by CRUD, invisible to search
 
@@ -87,7 +86,6 @@ async def test_upsert_with_embedding_writes_cache_and_mirror(
         assert item.embedding == _blob(_unit(0))
         assert item.embedding_model == "test-model"
         assert item.embedding_dim == DIM
-        pytest.skip("search: Task 6")  # noqa: PT023 -- remove in Task 6
         hits = await store.search(user_id="u_1", embedding=_unit(0))
         assert [hit.item.id for hit in hits] == ["v_1"]
 
@@ -113,7 +111,6 @@ async def test_upsert_content_change_without_embedding_drops_from_index(
         assert item is not None
         assert item.content == "v2"
         assert item.embedding is None
-        pytest.skip("search: Task 6")  # noqa: PT023 -- remove in Task 6
         hits = await store.search(user_id="u_1", embedding=_unit(0))
         assert hits == []
         vec_count = (
@@ -191,6 +188,86 @@ async def test_delete_removes_row_and_mirror(
         assert await store.delete("v_1") is False
         await session.commit()
         assert await store.get("v_1") is None
-        pytest.skip("search: Task 6")  # noqa: PT023 -- remove in Task 6
         hits = await store.search(user_id="u_1", embedding=_unit(0))
         assert hits == []
+
+
+async def test_search_returns_hits_in_distance_order_with_user_scoping(
+    env: tuple[SqliteVecAdapter, async_sessionmaker]
+) -> None:
+    adapter, factory = env
+    from octave.db.vault_store import VaultHit, VaultStore
+
+    async with factory() as session:
+        store = VaultStore(adapter, session)
+        await store.upsert(
+            item_id="v_far", user_id="u_1", kind=VaultKind.SKILL,
+            name="far", content="far text", embedding=_unit(1),
+        )
+        await store.upsert(
+            item_id="v_near", user_id="u_1", kind=VaultKind.SKILL,
+            name="near", content="near text", embedding=_unit(0),
+        )
+        await store.upsert(
+            item_id="v_bob", user_id="u_2", kind=VaultKind.SKILL,
+            name="bob", content="bob text", embedding=_unit(0),
+        )
+        await session.commit()
+        hits = await store.search(user_id="u_1", embedding=_unit(0), limit=10)
+        assert isinstance(hits[0], VaultHit)
+        assert [hit.item.id for hit in hits] == ["v_near", "v_far"]
+        assert hits[0].distance <= hits[1].distance
+        bob_hits = await store.search(user_id="u_2", embedding=_unit(0))
+        assert [hit.item.id for hit in bob_hits] == ["v_bob"]
+
+
+async def test_search_scoped_by_kind_and_session_id(
+    env: tuple[SqliteVecAdapter, async_sessionmaker]
+) -> None:
+    adapter, factory = env
+    from octave.db.vault_store import VaultStore
+
+    async with factory() as session:
+        store = VaultStore(adapter, session)
+        await store.upsert(
+            item_id="r_1", user_id="u_1", kind=VaultKind.RUN_RECORD,
+            name="chunk", content="verbatim",
+            meta={"session_id": "sess_A"}, embedding=_unit(0),
+        )
+        await store.upsert(
+            item_id="r_2", user_id="u_1", kind=VaultKind.RUN_RECORD,
+            name="chunk", content="other run",
+            meta={"session_id": "sess_B"}, embedding=_unit(0),
+        )
+        await session.commit()
+        hits = await store.search(
+            user_id="u_1", embedding=_unit(0),
+            kind=VaultKind.RUN_RECORD, session_id="sess_A",
+        )
+        assert [hit.item.id for hit in hits] == ["r_1"]
+
+
+async def test_list_items_filters_and_pages(
+    env: tuple[SqliteVecAdapter, async_sessionmaker]
+) -> None:
+    adapter, factory = env
+    from octave.db.vault_store import VaultStore
+
+    async with factory() as session:
+        store = VaultStore(adapter, session)
+        for i in range(3):
+            await store.upsert(
+                item_id=f"p_{i}", user_id="u_1", kind=VaultKind.PREFERENCE,
+                name=f"k{i}", content=f"c{i}",
+            )
+        await store.upsert(
+            item_id="s_9", user_id="u_1", kind=VaultKind.SKILL,
+            name="s", content="c",
+        )
+        await session.commit()
+        prefs = await store.list_items(user_id="u_1", kind=VaultKind.PREFERENCE)
+        assert {item.id for item in prefs} == {"p_0", "p_1", "p_2"}
+        page = await store.list_items(user_id="u_1", limit=2, offset=0)
+        assert len(page) == 2
+        all_items = await store.list_items(user_id="u_1")
+        assert len(all_items) == 4

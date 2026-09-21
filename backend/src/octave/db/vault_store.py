@@ -13,8 +13,10 @@ Embeddings are caller-supplied: this module must never import
 
 import struct
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from octave.db.adapter import DbAdapter
@@ -22,12 +24,21 @@ from octave.db.errors import DbConfigError, DbDimensionMismatchError
 from octave.db.models import VaultItem
 from octave.db.types import VaultKind
 
-__all__ = ["VaultStore"]
+__all__ = ["VaultHit", "VaultStore"]
 
 
 def _serialize_float32_le(vector: Sequence[float]) -> bytes:
     """Engine-neutral float32 little-endian BLOB (vec cache column)."""
     return struct.pack(f"<{len(vector)}f", *vector)
+
+
+@dataclass(frozen=True)
+class VaultHit:
+    """One vault item returned by ``VaultStore.search``, nearest first."""
+
+    item: VaultItem
+    distance: float
+    """vec0 cosine distance: 0 identical, 2 opposite."""
 
 
 class VaultStore:
@@ -120,3 +131,65 @@ class VaultStore:
     async def get(self, item_id: str) -> VaultItem | None:
         """Load one item by id, or None."""
         return await self._session.get(VaultItem, item_id)
+
+    async def list_items(
+        self,
+        *,
+        user_id: str,
+        kind: VaultKind | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[VaultItem]:
+        """Items by owner (optionally by kind), oldest first, paged."""
+        stmt = select(VaultItem).where(VaultItem.user_id == user_id)
+        if kind is not None:
+            stmt = stmt.where(VaultItem.kind == str(VaultKind(kind)))
+        stmt = (
+            stmt.order_by(VaultItem.created_at, VaultItem.id)
+            .limit(limit)
+            .offset(offset)
+        )
+        return list((await self._session.execute(stmt)).scalars())
+
+    async def search(
+        self,
+        *,
+        user_id: str,
+        embedding: Sequence[float],
+        kind: VaultKind | None = None,
+        session_id: str | None = None,
+        limit: int = 10,
+    ) -> list[VaultHit]:
+        """Filtered vector search, user-scoped, nearest first.
+
+        ``user_id`` is enforced twice — as an adapter filter and re-checked
+        when rows load (defense in depth against index/table drift). A vec
+        hit whose row is gone is skipped.
+        """
+        if limit < 1:
+            raise DbConfigError("limit must be >= 1")
+        connection = await self._session.connection()
+        hits = await self._adapter.search_similar(
+            connection,
+            embedding,
+            limit=limit,
+            kind=str(VaultKind(kind)) if kind is not None else None,
+            user_id=user_id,
+            session_id=session_id,
+        )
+        if not hits:
+            return []
+        ids = [hit.item_id for hit in hits]
+        rows = (
+            await self._session.execute(
+                select(VaultItem).where(
+                    VaultItem.id.in_(ids), VaultItem.user_id == user_id
+                )
+            )
+        ).scalars().all()
+        by_id = {row.id: row for row in rows}
+        return [
+            VaultHit(item=by_id[hit.item_id], distance=hit.distance)
+            for hit in hits
+            if hit.item_id in by_id
+        ]

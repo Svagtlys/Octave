@@ -88,7 +88,7 @@
 ## Context Manager
 
 - [ ] 1. Design context vault data model (skills, prompts, preferences, agent state schemas)
-- [ ] 2. Implement vector-capable storage layer for context vault (CRUD operations, queries, vector indexing)
+- [x] 2. Implement vector-capable storage layer for context vault (CRUD operations, queries, vector indexing) — PR #97
 - [ ] 3. Build context vault using tagged MCP tools (discover and invoke tagged tools to populate skills, prompts, and preferences into the vault) [Depends on: MCP Connector #8–10]
 - [ ] 4. Create context injection engine (select relevant context items based on rules/triggers)
 - [ ] 5. Implement agent context lifecycle (receive full context from completed agent runs via Agent Manager, embed into vector DB for future linked agent runs to query) [Depends on: Agent Manager #1–4]

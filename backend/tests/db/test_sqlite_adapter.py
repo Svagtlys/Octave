@@ -144,8 +144,9 @@ async def test_search_similar_ranks_nearest_first(tmp_path: Path) -> None:
                 )
                 await conn.execute(
                     text(
-                        f"INSERT INTO {vector_table_name(3)}(item_id, embedding) "
-                        "VALUES (:id, :vec)"
+                        f"INSERT INTO {vector_table_name(3)}"
+                        "(item_id, embedding, kind, user_id, session_id) "
+                        "VALUES (:id, :vec, '', '', '')"
                     ),
                     {"id": item_id, "vec": serialize_float32(vector)},
                 )
@@ -176,5 +177,121 @@ async def test_sqlite_adapter_passes_conformance(tmp_path: Path) -> None:
     engine = adapter.make_engine()
     try:
         await run_db_adapter_conformance(adapter, engine)
+    finally:
+        await engine.dispose()
+
+
+async def test_store_vector_round_trip_and_aux_columns(tmp_path: Path) -> None:
+    """store_vector writes aux columns; search finds it; remove_vector drops it."""
+    adapter = SqliteVecAdapter(_config(tmp_path, dim=3))
+    engine = adapter.make_engine()
+    try:
+        async with engine.begin() as conn:
+            await adapter.ensure_vector_store(conn)
+            await adapter.store_vector(
+                conn,
+                item_id="s_1",
+                embedding=[1.0, 0.0, 0.0],
+                kind="prompt",
+                user_id="u_1",
+                session_id="sess_A",
+            )
+            hits = await adapter.search_similar(conn, [1.0, 0.0, 0.0], limit=5)
+            assert [hit.item_id for hit in hits] == ["s_1"]
+            aux = (
+                await conn.execute(
+                    text(
+                        f"SELECT kind, user_id, session_id "
+                        f"FROM {vector_table_name(3)} WHERE item_id = 's_1'"
+                    )
+                )
+            ).one()
+            assert tuple(aux) == ("prompt", "u_1", "sess_A")
+            await adapter.remove_vector(conn, item_id="s_1")
+            hits = await adapter.search_similar(conn, [1.0, 0.0, 0.0], limit=5)
+            assert hits == []
+    finally:
+        await engine.dispose()
+
+
+async def test_store_vector_is_idempotent_replace(tmp_path: Path) -> None:
+    """Storing the same item_id twice keeps ONE row, latest vector wins."""
+    adapter = SqliteVecAdapter(_config(tmp_path, dim=2))
+    engine = adapter.make_engine()
+    try:
+        async with engine.begin() as conn:
+            await adapter.ensure_vector_store(conn)
+            await adapter.store_vector(
+                conn, item_id="s_1", embedding=[1.0, 0.0], kind="skill", user_id="u_1"
+            )
+            await adapter.store_vector(
+                conn, item_id="s_1", embedding=[0.0, 1.0], kind="skill", user_id="u_1"
+            )
+            rows = (
+                await conn.execute(
+                    text(f"SELECT count(*) FROM {vector_table_name(2)}")
+                )
+            ).scalar_one()
+            hits = await adapter.search_similar(conn, [0.0, 1.0], limit=5)
+        assert rows == 1
+        assert [hit.item_id for hit in hits] == ["s_1"]
+    finally:
+        await engine.dispose()
+
+
+async def test_store_vector_rejects_wrong_dim(tmp_path: Path) -> None:
+    adapter = SqliteVecAdapter(_config(tmp_path, dim=3))
+    engine = adapter.make_engine()
+    try:
+        async with engine.begin() as conn:
+            await adapter.ensure_vector_store(conn)
+            with pytest.raises(DbDimensionMismatchError):
+                await adapter.store_vector(conn, item_id="s_1", embedding=[1.0, 0.0])
+    finally:
+        await engine.dispose()
+
+
+async def test_remove_vector_unknown_id_is_silent(tmp_path: Path) -> None:
+    adapter = SqliteVecAdapter(_config(tmp_path, dim=2))
+    engine = adapter.make_engine()
+    try:
+        async with engine.begin() as conn:
+            await adapter.ensure_vector_store(conn)
+            await adapter.remove_vector(conn, item_id="ghost")  # must not raise
+    finally:
+        await engine.dispose()
+
+
+async def test_search_similar_filters_are_exact_pre_k(tmp_path: Path) -> None:
+    """Filters apply INSIDE the KNN scan: with k=1 the matching item is found
+    even when a closer non-matching item exists. Post-k filtering would
+    return zero hits here."""
+    adapter = SqliteVecAdapter(_config(tmp_path, dim=2))
+    engine = adapter.make_engine()
+    try:
+        async with engine.begin() as conn:
+            await adapter.ensure_vector_store(conn)
+            await adapter.store_vector(
+                conn, item_id="near_skill", embedding=[1.0, 0.0],
+                kind="skill", user_id="u_1",
+            )
+            await adapter.store_vector(
+                conn, item_id="far_prompt", embedding=[0.707, 0.707],
+                kind="prompt", user_id="u_1", session_id="sess_A",
+            )
+            hits = await adapter.search_similar(
+                conn, [1.0, 0.0], limit=1, kind="prompt"
+            )
+            assert [hit.item_id for hit in hits] == ["far_prompt"]
+            hits = await adapter.search_similar(
+                conn, [1.0, 0.0], limit=5, user_id="u_1", session_id="sess_A"
+            )
+            assert [hit.item_id for hit in hits] == ["far_prompt"]
+            hits = await adapter.search_similar(
+                conn, [1.0, 0.0], limit=5, session_id="sess_B"
+            )
+            assert hits == []
+            hits = await adapter.search_similar(conn, [1.0, 0.0], limit=5)
+            assert [hit.item_id for hit in hits] == ["near_skill", "far_prompt"]
     finally:
         await engine.dispose()

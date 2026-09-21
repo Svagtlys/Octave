@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import (
 
 from octave.db._bootstrap import make_async_creator
 from octave.db.adapter import DbAdapter
-from octave.db.errors import DbDimensionMismatchError
+from octave.db.errors import DbDimensionMismatchError, DbError
 from octave.db.registry import register_db
 from octave.db.types import VectorHit
 
@@ -99,10 +99,62 @@ class SqliteVecAdapter(DbAdapter):
             text(
                 f"CREATE VIRTUAL TABLE {vector_table_name(target)} USING vec0("
                 "item_id TEXT PRIMARY KEY, "
-                f"embedding float[{target}] distance_metric=cosine)"
+                f"embedding float[{target}] distance_metric=cosine, "
+                "kind TEXT, user_id TEXT, session_id TEXT)"
             )
         )
         logger.info("created vector index %s", vector_table_name(target))
+
+    async def store_vector(
+        self,
+        connection: AsyncConnection,
+        *,
+        item_id: str,
+        embedding: Sequence[float],
+        kind: str | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        target = self._dim(None)
+        if len(embedding) != target:
+            raise DbDimensionMismatchError(expected=target, actual=len(embedding))
+        # vec0 0.1.x does not support INSERT OR REPLACE (unique-constraint
+        # error on re-insert), so replace = delete-then-insert; the caller's
+        # transaction keeps the pair atomic.
+        try:
+            await connection.execute(
+                text(f"DELETE FROM {vector_table_name(target)} WHERE item_id = :id"),
+                {"id": item_id},
+            )
+            await connection.execute(
+                text(
+                    f"INSERT INTO {vector_table_name(target)}"
+                    "(item_id, embedding, kind, user_id, session_id) "
+                    "VALUES (:id, :vec, :kind, :user_id, :session_id)"
+                ),
+                {
+                    "id": item_id,
+                    "vec": sqlite_vec.serialize_float32(list(embedding)),
+                    # vec0 0.1.x rejects NULL in TEXT aux columns, so absent
+                    # filters are stored as "" (never matches a real filter
+                    # value; unfiltered searches return every row anyway).
+                    "kind": kind or "",
+                    "user_id": user_id or "",
+                    "session_id": session_id or "",
+                },
+            )
+        except Exception as exc:  # vendor errors never escape (errors.py rule)
+            raise DbError(f"vec0 store_vector failed: {exc}") from exc
+
+    async def remove_vector(self, connection: AsyncConnection, *, item_id: str) -> None:
+        try:
+            await connection.execute(
+                text(f"DELETE FROM {vector_table_name(self._dim(None))} "
+                     "WHERE item_id = :id"),
+                {"id": item_id},
+            )
+        except Exception as exc:
+            raise DbError(f"vec0 remove_vector failed: {exc}") from exc
 
     async def search_similar(
         self,
@@ -110,21 +162,30 @@ class SqliteVecAdapter(DbAdapter):
         embedding: Sequence[float],
         *,
         limit: int = 10,
+        kind: str | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> list[VectorHit]:
         target = self._dim(None)
         if len(embedding) != target:
             raise DbDimensionMismatchError(expected=target, actual=len(embedding))
-        table = vector_table_name(target)
-        rows = (
-            await connection.execute(
-                text(
-                    f"SELECT item_id, distance FROM {table} "
-                    "WHERE embedding MATCH :query AND k = :k ORDER BY distance"
-                ),
-                {
-                    "query": sqlite_vec.serialize_float32(list(embedding)),
-                    "k": limit,
-                },
-            )
-        ).all()
+        sql = (
+            f"SELECT item_id, distance FROM {vector_table_name(target)} "
+            "WHERE embedding MATCH :query AND k = :k"
+        )
+        params: dict[str, object] = {
+            "query": sqlite_vec.serialize_float32(list(embedding)),
+            "k": limit,
+        }
+        if kind is not None:
+            sql += " AND kind = :kind"
+            params["kind"] = kind
+        if user_id is not None:
+            sql += " AND user_id = :user_id"
+            params["user_id"] = user_id
+        if session_id is not None:
+            sql += " AND session_id = :session_id"
+            params["session_id"] = session_id
+        sql += " ORDER BY distance"
+        rows = (await connection.execute(text(sql), params)).all()
         return [VectorHit(item_id=str(row[0]), distance=float(row[1])) for row in rows]

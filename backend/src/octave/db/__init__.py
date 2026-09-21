@@ -20,6 +20,7 @@ from octave.db.registry import DbAdapterRegistry, default_registry, register_db
 # Imported for adapter registration side effects (registers "sqlite").
 from octave.db.sqlite_adapter import SqliteVecAdapter  # noqa: F401
 from octave.db.types import EventKind, VaultKind, VectorHit
+from octave.db.vault_store import VaultHit, VaultStore
 
 __all__ = [
     "Base",
@@ -30,7 +31,9 @@ __all__ = [
     "DatabaseSettings",
     "EventKind",
     "SqliteVecAdapter",
+    "VaultHit",
     "VaultKind",
+    "VaultStore",
     "VectorHit",
     "current",
     "db_lifespan",

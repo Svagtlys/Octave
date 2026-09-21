@@ -33,8 +33,9 @@ async def run_db_adapter_conformance(
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                f"INSERT INTO vec_vault_items_{dim}(item_id, embedding) "
-                "VALUES (:id, :vec)"
+                f"INSERT INTO vec_vault_items_{dim}"
+                "(item_id, embedding, kind, user_id, session_id) "
+                "VALUES (:id, :vec, '', '', '')"
             ),
             {"id": "c_1", "vec": _serialize([1.0] + [0.0] * (dim - 1))},
         )

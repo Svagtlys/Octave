@@ -62,6 +62,36 @@ class DbAdapter(ABC):
         a full rebuild. The caller owns the transaction.
         """
 
+    async def store_vector(
+        self,
+        connection: AsyncConnection,
+        *,
+        item_id: str,
+        embedding: Sequence[float],
+        kind: str | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+    ) -> None:
+        """Mirror one item's vector (and filter metadata) into the vector store.
+
+        Idempotent: storing the same ``item_id`` twice replaces, never duplicates.
+        Raises ``DbDimensionMismatchError`` on width mismatch. The caller owns
+        the transaction — pair this with the ``vault_items`` flush.
+
+        No-op default: engines whose vectors live in the table itself
+        (pgvector's column + native index) have nothing to mirror and only
+        implement ``search_similar``. The conformance suite pins the contract:
+        after ``store_vector``, ``search_similar`` must find the item.
+        """
+        return None
+
+    async def remove_vector(self, connection: AsyncConnection, *, item_id: str) -> None:
+        """Drop one item from the vector store. Unknown ids are silent no-ops.
+
+        No-op default for the same reason as ``store_vector``.
+        """
+        return None
+
     @abstractmethod
     async def search_similar(
         self,

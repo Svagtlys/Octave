@@ -99,11 +99,17 @@ class DbAdapter(ABC):
         embedding: Sequence[float],
         *,
         limit: int = 10,
+        kind: str | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> list[VectorHit]:
-        """Nearest neighbours, ascending distance.
+        """Nearest neighbours, ascending distance, optionally filtered.
 
-        Raises ``DbDimensionMismatchError`` when ``len(embedding)`` does not
-        match the configured index width.
+        Filters are applied inside the ANN scan (before ``limit``) — a
+        filtered search returns up to ``limit`` TRUE matches, never fewer
+        due to post-scan drops. ``None`` means unfiltered (the pre-#32
+        behavior). Raises ``DbDimensionMismatchError`` when
+        ``len(embedding)`` does not match the configured index width.
         """
 
     async def aclose(self) -> None:

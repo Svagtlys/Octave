@@ -260,3 +260,38 @@ async def test_remove_vector_unknown_id_is_silent(tmp_path: Path) -> None:
             await adapter.remove_vector(conn, item_id="ghost")  # must not raise
     finally:
         await engine.dispose()
+
+
+async def test_search_similar_filters_are_exact_pre_k(tmp_path: Path) -> None:
+    """Filters apply INSIDE the KNN scan: with k=1 the matching item is found
+    even when a closer non-matching item exists. Post-k filtering would
+    return zero hits here."""
+    adapter = SqliteVecAdapter(_config(tmp_path, dim=2))
+    engine = adapter.make_engine()
+    try:
+        async with engine.begin() as conn:
+            await adapter.ensure_vector_store(conn)
+            await adapter.store_vector(
+                conn, item_id="near_skill", embedding=[1.0, 0.0],
+                kind="skill", user_id="u_1",
+            )
+            await adapter.store_vector(
+                conn, item_id="far_prompt", embedding=[0.707, 0.707],
+                kind="prompt", user_id="u_1", session_id="sess_A",
+            )
+            hits = await adapter.search_similar(
+                conn, [1.0, 0.0], limit=1, kind="prompt"
+            )
+            assert [hit.item_id for hit in hits] == ["far_prompt"]
+            hits = await adapter.search_similar(
+                conn, [1.0, 0.0], limit=5, user_id="u_1", session_id="sess_A"
+            )
+            assert [hit.item_id for hit in hits] == ["far_prompt"]
+            hits = await adapter.search_similar(
+                conn, [1.0, 0.0], limit=5, session_id="sess_B"
+            )
+            assert hits == []
+            hits = await adapter.search_similar(conn, [1.0, 0.0], limit=5)
+            assert [hit.item_id for hit in hits] == ["near_skill", "far_prompt"]
+    finally:
+        await engine.dispose()

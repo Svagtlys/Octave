@@ -162,21 +162,30 @@ class SqliteVecAdapter(DbAdapter):
         embedding: Sequence[float],
         *,
         limit: int = 10,
+        kind: str | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
     ) -> list[VectorHit]:
         target = self._dim(None)
         if len(embedding) != target:
             raise DbDimensionMismatchError(expected=target, actual=len(embedding))
-        table = vector_table_name(target)
-        rows = (
-            await connection.execute(
-                text(
-                    f"SELECT item_id, distance FROM {table} "
-                    "WHERE embedding MATCH :query AND k = :k ORDER BY distance"
-                ),
-                {
-                    "query": sqlite_vec.serialize_float32(list(embedding)),
-                    "k": limit,
-                },
-            )
-        ).all()
+        sql = (
+            f"SELECT item_id, distance FROM {vector_table_name(target)} "
+            "WHERE embedding MATCH :query AND k = :k"
+        )
+        params: dict[str, object] = {
+            "query": sqlite_vec.serialize_float32(list(embedding)),
+            "k": limit,
+        }
+        if kind is not None:
+            sql += " AND kind = :kind"
+            params["kind"] = kind
+        if user_id is not None:
+            sql += " AND user_id = :user_id"
+            params["user_id"] = user_id
+        if session_id is not None:
+            sql += " AND session_id = :session_id"
+            params["session_id"] = session_id
+        sql += " ORDER BY distance"
+        rows = (await connection.execute(text(sql), params)).all()
         return [VectorHit(item_id=str(row[0]), distance=float(row[1])) for row in rows]

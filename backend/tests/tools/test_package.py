@@ -31,5 +31,6 @@ def test_public_names_are_exported() -> None:
         "ToolRoute",
         "ToolTranslationError",
         "ToolNameCollisionError",
+        "translate_tools",
     ):
         assert hasattr(tools_pkg, name), name

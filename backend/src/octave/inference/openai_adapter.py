@@ -168,6 +168,11 @@ class OpenAIAdapter(InferenceAdapter):
             kwargs["top_p"] = request.top_p
         if request.stop is not None:
             kwargs["stop"] = request.stop
+        if request.tools:
+            kwargs["tools"] = [
+                {"type": "function", "function": tool.model_dump(exclude_none=True)}
+                for tool in request.tools
+            ]
         if request.extra:
             kwargs["extra_body"] = dict(request.extra)
         return kwargs

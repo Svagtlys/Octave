@@ -16,7 +16,7 @@ from octave.inference.errors import (
     ModelNotFoundError,
 )
 from octave.inference.openai_adapter import OpenAIAdapter
-from octave.inference.types import CompletionRequest, Message
+from octave.inference.types import CompletionRequest, Message, ToolDefinition
 from tests.inference.conformance import InferenceAdapterConformanceSuite
 
 BASE_URL = "http://engine.test/v1"
@@ -262,5 +262,89 @@ async def test_connection_failure_translates() -> None:
         await adapter.complete(
             CompletionRequest(model=None, messages=[Message(role="user", content="hi")])
         )
+    await adapter.aclose()
+    await client.aclose()
+
+
+def _tools_request() -> CompletionRequest:
+    return CompletionRequest(
+        model=None,
+        messages=[Message(role="user", content="hi")],
+        tools=[
+            ToolDefinition(
+                name="mcp__fs__read",
+                description="Read a file",
+                parameters={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                },
+            )
+        ],
+    )
+
+
+async def test_tools_wrap_in_function_envelope() -> None:
+    captured: list[httpx.Request] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=CHAT_RESPONSE)
+
+    client = _mock_client(capture)
+    adapter = _adapter(client)
+    await adapter.complete(_tools_request())
+    assert json.loads(captured[0].content)["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "mcp__fs__read",
+                "description": "Read a file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                },
+            },
+        }
+    ]
+    await adapter.aclose()
+    await client.aclose()
+
+
+async def test_stream_sends_tools_envelope() -> None:
+    captured: list[httpx.Request] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            text=_sse(STREAM_CHUNKS),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    client = _mock_client(capture)
+    adapter = _adapter(client)
+    async for _ in adapter.stream(_tools_request()):
+        pass
+    assert json.loads(captured[0].content)["tools"][0]["type"] == "function"
+    await adapter.aclose()
+    await client.aclose()
+
+
+async def test_tools_key_absent_when_none_or_empty() -> None:
+    captured: list[httpx.Request] = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=CHAT_RESPONSE)
+
+    client = _mock_client(capture)
+    adapter = _adapter(client)
+    for tools in (None, []):
+        await adapter.complete(
+            CompletionRequest(
+                model=None, messages=[Message(role="user", content="hi")], tools=tools
+            )
+        )
+    assert all("tools" not in json.loads(r.content) for r in captured)
     await adapter.aclose()
     await client.aclose()

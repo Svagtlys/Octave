@@ -298,3 +298,56 @@ async def test_concurrent_stale_reads_coalesce_into_one_fetch() -> None:
 
     assert client.list_tools_calls == 1
     assert results == [1] * 5
+
+
+async def test_warm_up_waits_for_connection_then_populates() -> None:
+    manager = FakeManager()
+    client = manager.add("s1", name="One", state="starting")
+    client.tools = [_tool("echo")]
+    registry = ToolRegistry(manager=manager)
+    await registry.start()
+    try:
+        await anyio.sleep(0.05)
+        assert client.list_tools_calls == 0  # still starting: zero traffic
+        manager.set_status("s1", state="connected")
+        await wait_for(lambda: client.list_tools_calls == 1)
+    finally:
+        await registry.stop()
+
+
+async def test_list_changed_notification_triggers_refresh() -> None:
+    manager = FakeManager()
+    client = manager.add("s1", name="One")
+    client.tools = [_tool("echo")]
+    registry = ToolRegistry(manager=manager)
+    await registry.start()
+    try:
+        await wait_for(lambda: client.list_tools_calls == 1)  # warm-up fetch
+        client.notify(TOOLS_LIST_CHANGED)
+        await wait_for(lambda: client.list_tools_calls == 2)
+    finally:
+        await registry.stop()
+
+
+async def test_unrelated_notifications_do_not_refresh() -> None:
+    manager = FakeManager()
+    client = manager.add("s1", name="One")
+    client.tools = [_tool("echo")]
+    registry = ToolRegistry(manager=manager)
+    await registry.start()
+    try:
+        await wait_for(lambda: client.list_tools_calls == 1)
+        client.notify("notifications/message")
+        await anyio.sleep(0.05)
+        assert client.list_tools_calls == 1
+    finally:
+        await registry.stop()
+
+
+async def test_stop_is_idempotent() -> None:
+    manager = FakeManager()
+    manager.add("s1", name="One")
+    registry = ToolRegistry(manager=manager)
+    await registry.start()
+    await registry.stop()
+    await registry.stop()  # must not raise or hang

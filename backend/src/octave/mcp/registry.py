@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import anyio
+import anyio.abc
 from pydantic import BaseModel
 
 from octave.mcp.errors import McpError
@@ -25,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 TOOLS_LIST_CHANGED = "notifications/tools/list_changed"
 """MCP notification method signalling a server's tool-set changed."""
+
+_WARM_UP_POLL_SECONDS = 0.1
+"""In-memory status-poll interval while waiting for servers to settle."""
 
 
 class ServerToolInventory(BaseModel):
@@ -64,6 +68,67 @@ class ToolRegistry:
     def __init__(self, *, manager: McpServerManager) -> None:
         self._manager = manager
         self._entries: dict[str, _CacheEntry] = {}
+        self._task_group: anyio.abc.TaskGroup | None = None
+
+    # ---- lifecycle --------------------------------------------------
+
+    async def start(self) -> None:
+        """Spawn per-server list_changed listeners + one warm-up task.
+
+        Manual task-group entry with the manager's same-task convention —
+        ``mcp_lifespan`` calls start/stop from the lifespan task.
+        """
+        if self._task_group is not None:
+            raise McpError("ToolRegistry.start() already called")
+        self._task_group = anyio.create_task_group()
+        await self._task_group.__aenter__()
+        for status in self._manager.status():
+            self._task_group.start_soon(self._listen_tools_changed, status.id)
+        self._task_group.start_soon(self._warm_up)
+
+    async def stop(self) -> None:
+        """Cancel listener/warm-up tasks; awaited. Idempotent.
+
+        Cancellation is safe here (unlike the manager's cooperative stop):
+        these tasks own no SDK cancel scopes — they only consume Octave
+        memory streams, whose aclose runs during cancellation unwinding.
+        """
+        if self._task_group is None:
+            return
+        task_group, self._task_group = self._task_group, None
+        task_group.cancel_scope.cancel()
+        await task_group.__aexit__(None, None, None)
+
+    async def _warm_up(self) -> None:
+        """Populate each server's inventory once its supervisor settles.
+
+        Polls in-memory manager state (zero MCP traffic) until each server
+        reaches ``connected``/``crashed``, then refreshes it. Runs as a
+        background task so boot is never blocked (spec decision 4).
+        """
+        for status in self._manager.status():
+            while True:
+                state = self._manager.status_of(status.id).state
+                if state in ("connected", "crashed"):
+                    break
+                await anyio.sleep(_WARM_UP_POLL_SECONDS)
+            await self.refresh(status.id)
+
+    async def _listen_tools_changed(self, id: str) -> None:
+        """Refresh the inventory when the server announces tool changes.
+
+        The subscription stream lives on the client instance, which the
+        manager retains across restarts (aclose never tears down
+        notification senders) — restart-safe by construction. Failures are
+        contained: the lazy staleness path is the backstop.
+        """
+        try:
+            client = self._manager.get_client(id)
+            async for notification in client.subscribe_notifications():
+                if notification.method == TOOLS_LIST_CHANGED:
+                    await self.refresh(id)
+        except Exception:
+            logger.exception("MCP list_changed listener failed | id=%s", id)
 
     # ---- discovery --------------------------------------------------
 

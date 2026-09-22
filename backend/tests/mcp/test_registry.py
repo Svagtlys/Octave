@@ -351,3 +351,19 @@ async def test_stop_is_idempotent() -> None:
     await registry.start()
     await registry.stop()
     await registry.stop()  # must not raise or hang
+
+
+async def test_refresh_all_covers_every_server_and_isolates_failures() -> None:
+    manager = FakeManager()
+    good = manager.add("s1", name="One")
+    good.tools = [_tool("echo")]
+    bad = manager.add("s2", name="Two")
+    bad.list_tools_error = McpTimeoutError("boom")
+    registry = ToolRegistry(manager=manager)
+    await registry.refresh_all()
+    inventories = {inv.server_id: inv for inv in await registry.inventory()}
+    assert [t.name for t in inventories["s1"].tools] == ["echo"]
+    assert inventories["s1"].last_error is None
+    assert inventories["s2"].last_error == "boom"  # failure isolated, s1 intact
+    assert good.list_tools_calls >= 1
+    assert bad.list_tools_calls >= 1

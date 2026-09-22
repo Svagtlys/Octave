@@ -144,6 +144,12 @@ class ToolRegistry:
         async with entry.lock:
             await self._refresh_locked(id)
 
+    async def refresh_all(self) -> None:
+        """Refresh every registered server concurrently (per-server locks)."""
+        async with anyio.create_task_group() as task_group:
+            for status in self._manager.status():
+                task_group.start_soon(self.refresh, status.id)
+
     async def _refresh_locked(self, id: str) -> None:
         """One discovery round; caller must hold the server lock."""
         entry = self._entry(id)

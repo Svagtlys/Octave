@@ -12,7 +12,7 @@ import pytest
 
 from octave.mcp.client import McpClient
 from octave.mcp.config import McpSettings, StdioConfig
-from octave.mcp.errors import McpConnectionError
+from octave.mcp.errors import McpConnectionError, McpTimeoutError
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("OCTAVE_MCP_SKIP_SUBPROCESS_TESTS") == "1",
@@ -33,7 +33,7 @@ async def test_stdio_round_trip_against_real_subprocess() -> None:
         assert client.server_info.protocol_version
 
         tools = await client.list_tools()
-        assert [tool.name for tool in tools] == ["echo"]
+        assert [tool.name for tool in tools] == ["echo", "fail_tool", "slow_tool"]
 
         result = await client.call_tool("echo", {"text": "hello subprocess"})
         assert result.content[0].text == "hello subprocess"
@@ -132,3 +132,38 @@ async def test_manager_crashes_on_unstartable_server_without_blocking_app() -> N
     finally:
         await manager.stop_all()
     assert manager.status_of("bad").state == "stopped"
+
+
+async def test_registry_discovers_and_executes_tools_over_stdio() -> None:
+    """Manager + registry over a real subprocess: discover, call, fail, time out."""
+    from octave.mcp.manager import McpServerManager
+    from octave.mcp.registry import ToolRegistry
+    from tests.mcp.test_manager import wait_for
+
+    settings = McpSettings(request_timeout_seconds=0.5)
+    manager = McpServerManager(settings=settings)
+    manager.register(
+        id="echo",
+        name="Echo",
+        config=StdioConfig(command=sys.executable, args=[str(_ECHO_SERVER)]),
+    )
+    await manager.start_all()
+    registry = ToolRegistry(manager=manager)
+    await registry.start()
+    try:
+        await wait_for(manager, "echo", lambda s: s.state == "connected", timeout=15)
+        tools = await registry.tools_for("echo")
+        assert [tool.name for tool in tools] == ["echo", "fail_tool", "slow_tool"]
+
+        result = await registry.call_tool("echo", "echo", {"text": "registry"})
+        assert result.content[0].text == "registry"
+        assert result.is_error is False
+
+        failed = await registry.call_tool("echo", "fail_tool")
+        assert failed.is_error is True
+
+        with pytest.raises(McpTimeoutError):
+            await registry.call_tool("echo", "slow_tool")
+    finally:
+        await registry.stop()
+        await manager.stop_all()

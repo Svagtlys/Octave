@@ -5,8 +5,10 @@ state, no SDK imports — octave.mcp and octave.inference never import
 each other (design spec decision 5).
 """
 
+import copy
 import re
 from collections.abc import Sequence
+from typing import Any
 
 from octave.inference.types import ToolDefinition
 from octave.mcp import ServerToolInventory
@@ -31,6 +33,17 @@ def _exposed_name(server_name: str, tool_name: str) -> str:
     """``mcp__<server>__<tool>``, sanitized and truncated to 64 chars."""
     name = f"{_NAME_PREFIX}__{_sanitize(server_name)}__{_sanitize(tool_name)}"
     return name[:_MAX_NAME_LENGTH]
+
+
+def _parameters(schema: dict[str, Any]) -> dict[str, Any]:
+    """JSON Schema passthrough minus ``$schema``; deep copy, input untouched.
+
+    Octave never interprets JSON Schema internals (ToolInfo invariant);
+    local engines (Ollama/vLLM/llama.cpp) are strict about ``$schema``.
+    """
+    parameters = copy.deepcopy(schema)
+    parameters.pop("$schema", None)
+    return parameters
 
 
 def translate_tools(
@@ -60,7 +73,7 @@ def translate_tools(
                 ToolDefinition(
                     name=name,
                     description=tool.description,
-                    parameters=dict(tool.input_schema),
+                    parameters=_parameters(tool.input_schema),
                 )
             )
     return ProviderToolset(tools=tools, routes=routes)

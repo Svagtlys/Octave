@@ -104,3 +104,41 @@ def test_empty_inputs_produce_empty_toolset() -> None:
     assert translate_tools([]).tools == []
     assert translate_tools([]).routes == {}
     assert translate_tools([_inventory(tools=[])]).tools == []
+
+
+def test_strips_dollar_schema_keeps_rest_verbatim() -> None:
+    schema = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {"q": {"type": "string", "enum": ["a", "b"]}},
+        "required": ["q"],
+        "$defs": {"nested": {"type": "object"}},
+        "additionalProperties": False,
+    }
+    result = translate_tools([_inventory(tools=[_tool(schema=schema)])])
+    parameters = result.tools[0].parameters
+    assert "$schema" not in parameters
+    expected = {k: v for k, v in schema.items() if k != "$schema"}
+    assert parameters == expected
+
+
+def test_does_not_mutate_input_schemas() -> None:
+    schema = {"$schema": "draft-07", "type": "object"}
+    inventory = _inventory(tools=[_tool(schema=schema)])
+    result = translate_tools([inventory])
+    assert inventory.tools[0].input_schema == schema  # $schema untouched
+    result.tools[0].parameters["mutated"] = True
+    assert "mutated" not in inventory.tools[0].input_schema
+
+
+def test_description_none_omitted_from_dump() -> None:
+    result = translate_tools(
+        [_inventory(tools=[_tool(description=None)])]
+    )
+    assert "description" not in result.tools[0].model_dump(exclude_none=True)
+    result = translate_tools(
+        [_inventory(tools=[_tool(description="Reads files")])]
+    )
+    assert (
+        result.tools[0].model_dump(exclude_none=True)["description"] == "Reads files"
+    )

@@ -253,3 +253,48 @@ async def test_refresh_unknown_server_raises_config_error() -> None:
     registry = ToolRegistry(manager=FakeManager())
     with pytest.raises(McpConfigError):
         await registry.refresh("nope")
+
+
+async def test_fresh_entry_is_served_from_cache_without_wire_traffic() -> None:
+    manager = FakeManager()
+    client = manager.add("s1", name="One")
+    client.tools = [_tool("echo")]
+    registry = ToolRegistry(manager=manager)
+    await registry.tools_for("s1")
+    await registry.tools_for("s1")
+    await registry.inventory()
+    assert client.list_tools_calls == 1
+
+
+async def test_restart_invalidates_entry() -> None:
+    manager = FakeManager()
+    client = manager.add("s1", name="One")
+    client.tools = [_tool("echo")]
+    registry = ToolRegistry(manager=manager)
+    await registry.tools_for("s1")
+    manager.set_status("s1", restart_count=1)
+    await registry.tools_for("s1")
+    assert client.list_tools_calls == 2
+
+
+async def test_concurrent_stale_reads_coalesce_into_one_fetch() -> None:
+    manager = FakeManager()
+    client = manager.add("s1", name="One")
+    client.tools = [_tool("echo")]
+    client.list_tools_block = anyio.Event()
+    registry = ToolRegistry(manager=manager)
+
+    results: list[int] = []
+
+    async def reader() -> None:
+        tools = await registry.tools_for("s1")
+        results.append(len(tools))
+
+    async with anyio.create_task_group() as tg:
+        for _ in range(5):
+            tg.start_soon(reader)
+        await anyio.sleep(0.05)  # one reader holds the lock inside list_tools
+        client.list_tools_block.set()
+
+    assert client.list_tools_calls == 1
+    assert results == [1] * 5

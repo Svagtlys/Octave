@@ -20,5 +20,6 @@ def test_public_names_are_exported() -> None:
         "CompletionRequest",
         "EmbeddingRequest",
         "ModelInfo",
+        "ToolDefinition",
     ):
         assert hasattr(inference, name), name

@@ -9,6 +9,7 @@ from octave.inference.types import (
     EmbeddingRequest,
     Message,
     ModelInfo,
+    ToolDefinition,
 )
 
 
@@ -51,3 +52,25 @@ def test_model_info_minimal() -> None:
     info = ModelInfo(id="qwen2.5-coder:32b")
     assert info.created is None
     assert info.owned_by is None
+
+
+def test_completion_request_tools_defaults_none() -> None:
+    request = CompletionRequest(model=None, messages=[])
+    assert request.tools is None
+
+
+def test_completion_request_round_trips_tools() -> None:
+    tool = ToolDefinition(
+        name="mcp__fs__read",
+        description="Read a file",
+        parameters={"type": "object", "properties": {"path": {"type": "string"}}},
+    )
+    request = CompletionRequest(model="m", messages=[], tools=[tool])
+    assert request.tools == [tool]
+
+
+def test_tool_definition_defaults() -> None:
+    tool = ToolDefinition(name="x")
+    assert tool.description is None
+    assert tool.parameters == {}
+    assert ToolDefinition(name="y").parameters is not tool.parameters

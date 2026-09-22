@@ -178,3 +178,78 @@ async def test_call_tool_is_error_result_passes_through() -> None:
     registry = ToolRegistry(manager=manager)
     result = await registry.call_tool("s1", "fail")
     assert result.is_error is True
+
+
+async def test_tools_for_unpopulated_fetches_synchronously() -> None:
+    manager = FakeManager()
+    client = manager.add("s1", name="One")
+    client.tools = [_tool("echo")]
+    registry = ToolRegistry(manager=manager)
+    tools = await registry.tools_for("s1")
+    assert [t.name for t in tools] == ["echo"]
+    assert client.list_tools_calls == 1
+
+
+async def test_inventory_reports_freshness_metadata() -> None:
+    manager = FakeManager()
+    client = manager.add("s1", name="One")
+    client.tools = [_tool("echo")]
+    registry = ToolRegistry(manager=manager)
+    [inv] = await registry.inventory()
+    assert inv.server_id == "s1"
+    assert inv.server_name == "One"
+    assert inv.state == "connected"
+    assert inv.fetched_at is not None
+    assert inv.last_error is None
+
+
+async def test_discovery_failure_records_error_and_never_raises() -> None:
+    manager = FakeManager()
+    client = manager.add("s1", name="One")
+    client.list_tools_error = McpTimeoutError("boom")
+    registry = ToolRegistry(manager=manager)
+    tools = await registry.tools_for("s1")
+    assert tools == []
+    [inv] = await registry.inventory()
+    assert inv.fetched_at is None  # failure does not mark the entry fresh
+    assert inv.last_error == "boom"
+
+
+async def test_last_known_good_survives_later_failure() -> None:
+    manager = FakeManager()
+    client = manager.add("s1", name="One")
+    client.tools = [_tool("echo")]
+    registry = ToolRegistry(manager=manager)
+    await registry.tools_for("s1")
+    first_fetched_at = registry_status_fetched_at(registry)
+    client.tools = []
+    client.list_tools_error = McpConnectionError("died")
+    manager.set_status("s1", restart_count=1)  # force staleness
+    [inv] = await registry.inventory()
+    assert [t.name for t in inv.tools] == ["echo"]  # kept, not wiped
+    assert inv.last_error == "died"
+    assert inv.fetched_at == first_fetched_at  # timestamp of last SUCCESS
+
+
+def registry_status_fetched_at(registry: ToolRegistry):  # noqa: ANN201 - test helper
+    """Grab the entry's fetched_at via the (sync) internal cache."""
+    return next(iter(registry._entries.values())).fetched_at  # noqa: SLF001
+
+
+async def test_recovered_server_clears_error_on_next_read() -> None:
+    manager = FakeManager()
+    client = manager.add("s1", name="One")
+    client.list_tools_error = McpTimeoutError("boom")
+    registry = ToolRegistry(manager=manager)
+    await registry.tools_for("s1")
+    client.list_tools_error = None
+    client.tools = [_tool("echo")]
+    [inv] = await registry.inventory()  # still stale (never succeeded) -> retry
+    assert inv.last_error is None
+    assert [t.name for t in inv.tools] == ["echo"]
+
+
+async def test_refresh_unknown_server_raises_config_error() -> None:
+    registry = ToolRegistry(manager=FakeManager())
+    with pytest.raises(McpConfigError):
+        await registry.refresh("nope")

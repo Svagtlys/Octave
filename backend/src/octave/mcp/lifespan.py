@@ -17,6 +17,7 @@ from fastapi import FastAPI
 
 from octave.mcp.config import ServerConfig
 from octave.mcp.manager import ClientFactory, McpServerManager
+from octave.mcp.registry import ToolRegistry
 
 __all__ = ["mcp_lifespan"]
 
@@ -42,9 +43,15 @@ async def mcp_lifespan(
         manager.register(id=server_id, name=name, config=config)
     await manager.start_all()
     app.state.mcp_manager = manager
+    registry = ToolRegistry(manager=manager)
+    await registry.start()
+    app.state.mcp_registry = registry
     logger.info("MCP manager ready: %s server(s)", len(entries))
     try:
         yield
     finally:
+        # Registry teardown first: listeners stop consuming streams before
+        # connections unwind.
+        await registry.stop()
         await manager.stop_all()
         logger.info("MCP manager stopped")

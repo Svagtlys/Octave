@@ -68,8 +68,8 @@ Implements the Model Context Protocol client, enabling Octave to discover, manag
 - **JSON-RPC 2.0 Client Core** — Typed `McpClient` façade (`octave.mcp`) over the official `mcp` Python SDK: framing, request-ID correlation, initialize handshake, error translation
 - **Transport Support** — stdio (subprocess) and Streamable HTTP behind `open_transport`; legacy SSE deliberately not wrapped
 - **Connection Lifecycle** — Start and manual restart (`McpClient.restart()`) with `is_connected` liveness; subprocess exit detected via transport-stream monitoring (fail-fast `McpConnectionError`). Auto-restart policy and health monitoring land with the server lifecycle manager (roadmap #4) *(shipped: `octave.mcp.manager` — per-server supervisors, auto-restart with backoff + crash-loop detection, probe-on-timeout health, PR #93)*
-- **Tool Discovery & Caching** — Fetches tool schemas and descriptions from servers; caches for fast lookup
-- **Tool Execution Engine** — Invokes tools with arguments, handles responses and errors, enforces timeouts
+- **Tool Discovery & Caching** — Fetches tool schemas and descriptions from servers; caches for fast lookup *(shipped: `octave.mcp.registry.ToolRegistry` — fleet-wide inventory cache with event-driven invalidation (restart drift, `tools/list_changed` notifications, warm-up + lazy refresh), PR #98)*
+- **Tool Execution Engine** — Invokes tools with arguments, handles responses and errors, enforces timeouts *(shipped: `ToolRegistry.call_tool` — `(server_id, tool_name)` surface forwarding to `McpClient.call_tool`; timeout/RPC/connection semantics stay the client's, PR #98)*
 - **Configuration Persistence** — Stores server connection configs in the unified database
 - **Tool Tagging System** — Labels tools with internal Octave tags (e.g., `context_retrieval`, `file_operations`) used by the Context Manager for vault population
 - **Tool Re-naming / Re-describing** — Maps custom agent-facing names and descriptions to underlying MCP tool identifiers, improving clarity for the agent without modifying the MCP server

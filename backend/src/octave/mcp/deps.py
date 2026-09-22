@@ -9,8 +9,9 @@ servers it cannot resolve "the" client.
 from fastapi import HTTPException, Request
 
 from octave.mcp.manager import McpServerManager
+from octave.mcp.registry import ToolRegistry
 
-__all__ = ["get_mcp_manager"]
+__all__ = ["get_mcp_manager", "get_tool_registry"]
 
 
 async def get_mcp_manager(request: Request) -> McpServerManager:
@@ -25,3 +26,17 @@ async def get_mcp_manager(request: Request) -> McpServerManager:
     if manager is None:
         raise HTTPException(status_code=503, detail="MCP manager not configured")
     return manager
+
+
+async def get_tool_registry(request: Request) -> ToolRegistry:
+    """Resolve the app-wide tool registry from ``app.state.mcp_registry``.
+
+    Raises 503 while no registry is configured — Octave boots fine without
+    any MCP servers (same posture as get_mcp_manager).
+    """
+    registry: ToolRegistry | None = getattr(request.app.state, "mcp_registry", None)
+    if registry is None:
+        raise HTTPException(
+            status_code=503, detail="MCP tool registry not configured"
+        )
+    return registry

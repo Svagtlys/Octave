@@ -24,6 +24,9 @@ def test_public_names_are_exported() -> None:
         "McpTimeoutError",
         "McpConfigError",
         "get_mcp_manager",
+        "ServerToolInventory",
+        "ToolRegistry",
+        "get_tool_registry",
     ):
         assert hasattr(mcp_pkg, name), name
 

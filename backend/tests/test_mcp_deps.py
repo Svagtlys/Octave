@@ -7,8 +7,9 @@ get_mcp_client was removed in #18: with N managed servers it cannot resolve
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from octave.mcp.deps import get_mcp_manager
+from octave.mcp.deps import get_mcp_manager, get_tool_registry
 from octave.mcp.manager import McpServerManager
+from octave.mcp.registry import ToolRegistry
 
 
 def _probe_app() -> FastAPI:
@@ -55,3 +56,43 @@ def test_get_mcp_client_is_gone() -> None:
 
     assert not hasattr(octave.mcp, "get_mcp_client")
     assert not hasattr(octave.mcp.deps, "get_mcp_client")
+
+
+def _registry_probe_app() -> FastAPI:
+    """A minimal app whose only route depends on the registry."""
+    app = FastAPI()
+
+    @app.get("/probe")
+    async def _probe(
+        registry: ToolRegistry = Depends(get_tool_registry),
+    ) -> dict[str, str]:
+        return {"registry": type(registry).__name__}
+
+    return app
+
+
+def test_registry_unset_returns_503() -> None:
+    response = TestClient(_registry_probe_app()).get("/probe")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "MCP tool registry not configured"
+
+
+def test_registry_state_provides() -> None:
+    app = _registry_probe_app()
+    app.state.mcp_registry = ToolRegistry(manager=McpServerManager())
+    response = TestClient(app).get("/probe")
+    assert response.status_code == 200
+    assert response.json() == {"registry": "ToolRegistry"}
+
+
+def test_registry_dependency_override_wins() -> None:
+    class FakeRegistry(ToolRegistry):
+        """No-op stand-in proving routes resolve through the override seam."""
+
+    app = _registry_probe_app()
+    app.dependency_overrides[get_tool_registry] = lambda: FakeRegistry(
+        manager=McpServerManager()
+    )
+    response = TestClient(app).get("/probe")
+    assert response.status_code == 200
+    assert response.json() == {"registry": "FakeRegistry"}

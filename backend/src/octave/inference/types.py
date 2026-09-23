@@ -17,6 +17,7 @@ __all__ = [
     "EmbeddingResult",
     "Message",
     "ModelInfo",
+    "ToolDefinition",
     "Usage",
 ]
 
@@ -28,6 +29,18 @@ class Message(BaseModel):
 
     role: Role
     content: str
+
+
+class ToolDefinition(BaseModel):
+    """One tool in Octave's provider-neutral shape.
+
+    ``parameters`` is a JSON Schema object; the adapter wraps this model
+    into the provider envelope. SDK types never appear here.
+    """
+
+    name: str
+    description: str | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
 
 
 class Usage(BaseModel):
@@ -50,6 +63,7 @@ class CompletionRequest(BaseModel):
     max_tokens: int | None = None
     top_p: float | None = None
     stop: list[str] | None = None
+    tools: list[ToolDefinition] | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
 

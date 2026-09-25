@@ -46,6 +46,18 @@ def test_settings_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     assert McpSettings().request_timeout_seconds == 5.0
 
 
+def test_settings_default_initialize_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OCTAVE_MCP_INITIALIZE_TIMEOUT_SECONDS", raising=False)
+    assert McpSettings().initialize_timeout_seconds == 30.0
+
+
+def test_settings_env_override_initialize_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OCTAVE_MCP_INITIALIZE_TIMEOUT_SECONDS", "8")
+    assert McpSettings().initialize_timeout_seconds == 8.0
+
+
 class TestSupervisionSettings:
     """Lifecycle-manager knobs (spec: restart policy table)."""
 

@@ -63,6 +63,11 @@ class McpSettings(BaseSettings):
 
     request_timeout_seconds: float = 30.0
 
+    initialize_timeout_seconds: float = 30.0
+    """Budget for the initialize handshake during connect()/restart().
+    Separate from request_timeout_seconds: a slow-to-boot server must not be
+    penalized by callers who tighten the steady-state per-request budget."""
+
     restart_base_delay_seconds: float = 1.0
     """First auto-restart delay; exponential backoff multiplies by 2 per attempt."""
 

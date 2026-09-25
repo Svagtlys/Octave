@@ -11,7 +11,10 @@ def test_tool_outcome_defaults() -> None:
 
 def test_tool_turn_round_trip() -> None:
     turn = ToolTurn(
-        messages=[Message(role="user", content="hi"), Message(role="assistant", content="yo")],
+        messages=[
+            Message(role="user", content="hi"),
+            Message(role="assistant", content="yo"),
+        ],
         result=CompletionResult(text="yo", model="m"),
         tool_rounds=0,
     )

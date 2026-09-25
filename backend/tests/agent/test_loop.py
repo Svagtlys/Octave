@@ -21,7 +21,9 @@ ROUTE = ToolRoute(server_id="srv", tool_name="read")
 TOOLSET = ProviderToolset(tools=[], routes={"mcp__fs__read": ROUTE})
 
 
-def _loop(adapter: ScriptedAdapter, executor: RecordingExecutor, max_rounds: int = 8) -> ToolLoop:
+def _loop(
+    adapter: ScriptedAdapter, executor: RecordingExecutor, max_rounds: int = 8
+) -> ToolLoop:
     return ToolLoop(adapter=adapter, executor=executor, max_tool_rounds=max_rounds)
 
 
@@ -38,9 +40,8 @@ async def test_passthrough_without_tool_calls() -> None:
 
 
 async def test_one_round_multiple_calls() -> None:
-    adapter = ScriptedAdapter(
-        [tool_result(tool_call("c1", "mcp__fs__read"), tool_call("c2", "mcp__fs__read")), final_result()]
-    )
+    calls = [tool_call("c1", "mcp__fs__read"), tool_call("c2", "mcp__fs__read")]
+    adapter = ScriptedAdapter([tool_result(*calls), final_result()])
     executor = RecordingExecutor()
     turn = await _loop(adapter, executor).run(list(USER), TOOLSET)
     assert turn.tool_rounds == 1
@@ -50,7 +51,7 @@ async def test_one_round_multiple_calls() -> None:
         Message(
             role="assistant",
             content="",
-            tool_calls=[tool_call("c1", "mcp__fs__read"), tool_call("c2", "mcp__fs__read")],
+            tool_calls=calls,
         ),
         Message(role="tool", content="ok", tool_call_id="c1", name="mcp__fs__read"),
         Message(role="tool", content="ok", tool_call_id="c2", name="mcp__fs__read"),
@@ -60,7 +61,11 @@ async def test_one_round_multiple_calls() -> None:
 
 async def test_multi_round_chain() -> None:
     adapter = ScriptedAdapter(
-        [tool_result(tool_call("c1", "mcp__fs__read")), tool_result(tool_call("c2", "mcp__fs__read")), final_result()]
+        [
+            tool_result(tool_call("c1", "mcp__fs__read")),
+            tool_result(tool_call("c2", "mcp__fs__read")),
+            final_result(),
+        ]
     )
     turn = await _loop(adapter, RecordingExecutor()).run(list(USER), TOOLSET)
     assert turn.tool_rounds == 2
@@ -105,7 +110,11 @@ async def test_finish_reason_tool_calls_with_empty_list_is_final() -> None:
     from octave.inference.types import CompletionResult
 
     adapter = ScriptedAdapter(
-        [CompletionResult(text="done", model="fake", finish_reason="tool_calls", tool_calls=[])]
+        [
+            CompletionResult(
+                text="done", model="fake", finish_reason="tool_calls", tool_calls=[]
+            )
+        ]
     )
     turn = await _loop(adapter, RecordingExecutor()).run(list(USER), TOOLSET)
     assert turn.tool_rounds == 0
@@ -156,7 +165,10 @@ async def test_error_outcome_continues_loop() -> None:
 
 async def test_adapter_error_propagates_untouched() -> None:
     adapter = ScriptedAdapter(
-        [tool_result(tool_call("c1", "mcp__fs__read")), AdapterConnectionError("engine down")]
+        [
+            tool_result(tool_call("c1", "mcp__fs__read")),
+            AdapterConnectionError("engine down"),
+        ]
     )
     with pytest.raises(AdapterConnectionError):
         await _loop(adapter, RecordingExecutor()).run(list(USER), TOOLSET)
@@ -164,7 +176,10 @@ async def test_adapter_error_propagates_untouched() -> None:
 
 async def test_arguments_dict_forwarded_verbatim() -> None:
     adapter = ScriptedAdapter(
-        [tool_result(tool_call("c1", "mcp__fs__read", '{"path": "/x", "n": 3}')), final_result()]
+        [
+            tool_result(tool_call("c1", "mcp__fs__read", '{"path": "/x", "n": 3}')),
+            final_result(),
+        ]
     )
     executor = RecordingExecutor()
     await _loop(adapter, executor).run(list(USER), TOOLSET)

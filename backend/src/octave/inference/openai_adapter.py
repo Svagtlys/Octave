@@ -169,7 +169,9 @@ class OpenAIAdapter(InferenceAdapter):
     def _chat_kwargs(self, request: CompletionRequest) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "model": self._resolve_model(request.model),
-            "messages": [self._message_payload(message) for message in request.messages],
+            "messages": [
+                self._message_payload(message) for message in request.messages
+            ],
         }
         if request.temperature is not None:
             kwargs["temperature"] = request.temperature

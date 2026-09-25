@@ -450,7 +450,9 @@ async def test_assistant_tool_calls_message_uses_provider_envelope() -> None:
             Message(
                 role="assistant",
                 content="",
-                tool_calls=[ToolCall(id="call_1", name="mcp__fs__read", arguments='{"p": 1}')],
+                tool_calls=[
+                    ToolCall(id="call_1", name="mcp__fs__read", arguments='{"p": 1}')
+                ],
             ),
         ]
     )
@@ -469,7 +471,11 @@ async def test_assistant_tool_calls_message_uses_provider_envelope() -> None:
 
 async def test_tool_result_message_carries_tool_call_id_and_name() -> None:
     body = await _capture_chat_body(
-        [Message(role="tool", content="42", tool_call_id="call_1", name="mcp__fs__read")]
+        [
+            Message(
+                role="tool", content="42", tool_call_id="call_1", name="mcp__fs__read"
+            )
+        ]
     )
     assert body["messages"][0] == {
         "role": "tool",

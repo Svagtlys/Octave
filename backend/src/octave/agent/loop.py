@@ -76,7 +76,9 @@ class ToolLoop:
                     messages=history,
                 )
             rounds += 1
-            logger.debug("tool round | round=%s calls=%s", rounds, len(result.tool_calls))
+            logger.debug(
+                "tool round | round=%s calls=%s", rounds, len(result.tool_calls)
+            )
             for call in result.tool_calls:
                 history.append(await self._execute(call, toolset))
 
@@ -92,7 +94,10 @@ class ToolLoop:
             return self._tool_message(
                 call,
                 ToolOutcome(
-                    content=f"Tool call arguments are not a valid JSON object: {arguments}",
+                    content=(
+                        "Tool call arguments are not a valid JSON object: "
+                        f"{arguments}"
+                    ),
                     is_error=True,
                 ),
             )

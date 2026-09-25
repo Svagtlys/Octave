@@ -33,7 +33,9 @@ class ScriptedAdapter(InferenceAdapter):
             raise item
         return item
 
-    async def stream(self, request: CompletionRequest) -> AsyncIterator[CompletionChunk]:
+    async def stream(
+        self, request: CompletionRequest
+    ) -> AsyncIterator[CompletionChunk]:
         raise NotImplementedError
         yield CompletionChunk()  # satisfy async-generator typing
 

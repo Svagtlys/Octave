@@ -38,7 +38,10 @@ class StubRegistry:
 async def test_joins_text_blocks_and_passes_is_error_through() -> None:
     registry = StubRegistry(
         result=ToolResult(
-            content=[ToolContent(kind="text", text="a"), ToolContent(kind="text", text="b")]
+            content=[
+                ToolContent(kind="text", text="a"),
+                ToolContent(kind="text", text="b"),
+            ]
         )
     )
     outcome = await McpToolExecutor(registry).call("srv", "read", {"p": 1})  # type: ignore[arg-type]

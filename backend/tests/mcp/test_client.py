@@ -545,3 +545,86 @@ async def test_on_lost_hook_exception_never_reaches_caller(harness: Any) -> None
     async with harness(request_timeout=0.1, on_lost=boom) as (client, _peer):
         with pytest.raises(McpTimeoutError):  # the Octave error, not RuntimeError
             await client.call_tool("slow")
+
+
+async def test_initialize_timeout_uses_dedicated_budget() -> None:
+    """The handshake budget is initialize_timeout_seconds, not the request budget.
+
+    Silent-but-alive peer (never answers initialize); initialize_timeout=0.05,
+    request_timeout=1.0. The raised McpTimeoutError must cite 0.05 — proving
+    the handshake no longer reads the steady-state knob.
+    """
+
+    @asynccontextmanager
+    async def _silent_factory(
+        _config: ServerConfig,
+    ) -> AsyncIterator[TransportStreams]:
+        # Memory streams buffer infinitely: the initialize request simply
+        # sits unanswered; no peer task needed.
+        async with create_client_server_memory_streams() as (
+            (cread, cwrite),
+            (_sread, _swrite),
+        ):
+            yield TransportStreams(read=cread, write=cwrite)
+
+    client = McpClient(
+        transport_factory=_silent_factory,
+        settings=McpSettings(
+            initialize_timeout_seconds=0.05, request_timeout_seconds=1.0
+        ),
+    )
+    with pytest.raises(McpTimeoutError) as excinfo:
+        await client.connect(StdioConfig(command="silent-peer"))
+    assert "0.05" in str(excinfo.value)  # the dedicated budget fired
+    assert "1.0" not in str(excinfo.value)  # not the request budget
+    assert client.is_connected is False
+
+
+async def test_slow_initialize_survives_tight_request_timeout() -> None:
+    """Regression (#101): a tight request_timeout_seconds must not strangle the
+    handshake. Peer boots slowly (answers initialize after 0.2 s) while the
+    steady-state budget is 0.05 s; connect() must still succeed on the default
+    30 s initialize budget."""
+
+    @asynccontextmanager
+    async def _slow_peer_factory(
+        _config: ServerConfig,
+    ) -> AsyncIterator[TransportStreams]:
+        async with create_client_server_memory_streams() as (
+            (cread, cwrite),
+            (sread, swrite),
+        ):
+
+            async def _answer_after_a_moment() -> None:
+                message = await sread.receive()
+                root = message.message.root
+                if isinstance(root, JSONRPCRequest) and root.method == "initialize":
+                    await anyio.sleep(0.2)  # slow boot: outlasts request_timeout
+                    await swrite.send(
+                        SessionMessage(
+                            JSONRPCMessage(
+                                root=JSONRPCResponse(
+                                    jsonrpc="2.0", id=root.id, result=_INIT_RESULT
+                                )
+                            )
+                        )
+                    )
+                async for _message in sread:
+                    pass  # consume notifications/initialized and everything else
+
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(_answer_after_a_moment)
+                try:
+                    yield TransportStreams(read=cread, write=cwrite)
+                finally:
+                    tg.cancel_scope.cancel()
+
+    client = McpClient(
+        transport_factory=_slow_peer_factory,
+        settings=McpSettings(request_timeout_seconds=0.05),
+    )
+    try:
+        await client.connect(StdioConfig(command="slow-boot-peer"))
+        assert client.is_connected is True
+    finally:
+        await client.aclose()

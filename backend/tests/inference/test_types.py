@@ -6,9 +6,11 @@ from pydantic import ValidationError
 from octave.inference.types import (
     CompletionChunk,
     CompletionRequest,
+    CompletionResult,
     EmbeddingRequest,
     Message,
     ModelInfo,
+    ToolCall,
     ToolDefinition,
 )
 
@@ -32,9 +34,37 @@ def test_completion_request_extra_is_not_shared() -> None:
     assert b.extra == {}
 
 
-def test_message_rejects_unknown_role() -> None:
+def test_tool_role_is_valid() -> None:
+    message = Message(role="tool", content="result", tool_call_id="call_1", name="mcp__fs__read")
+    assert message.tool_calls is None
+
+
+def test_message_tool_fields_default_none() -> None:
+    message = Message(role="assistant", content="hi")
+    assert message.tool_calls is None
+    assert message.tool_call_id is None
+    assert message.name is None
+
+
+def test_message_rejects_truly_unknown_role() -> None:
     with pytest.raises(ValidationError):
-        Message(role="tool", content="hi")  # type: ignore[arg-type]
+        Message(role="developer", content="hi")  # type: ignore[arg-type]
+
+
+def test_tool_call_round_trip() -> None:
+    call = ToolCall(id="call_1", name="mcp__fs__read", arguments='{"path": "/tmp/x"}')
+    assert ToolCall.model_validate(call.model_dump()) == call
+
+
+def test_completion_result_tool_calls_defaults_none() -> None:
+    result = CompletionResult(text="hi", model="m")
+    assert result.tool_calls is None
+
+
+def test_completion_result_round_trips_tool_calls() -> None:
+    call = ToolCall(id="c1", name="x", arguments="{}")
+    result = CompletionResult(text="", model="m", finish_reason="tool_calls", tool_calls=[call])
+    assert CompletionResult.model_validate(result.model_dump()) == result
 
 
 def test_completion_chunk_defaults() -> None:

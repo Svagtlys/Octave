@@ -33,6 +33,7 @@ from octave.inference.types import (
     EmbeddingRequest,
     EmbeddingResult,
     ModelInfo,
+    ToolCall,
     Usage,
 )
 
@@ -93,11 +94,20 @@ class OpenAIAdapter(InferenceAdapter):
         except openai.APIError as exc:
             raise _translate(exc) from exc
         choice = response.choices[0]
+        tool_calls = [
+            ToolCall(
+                id=call.id,
+                name=call.function.name,
+                arguments=call.function.arguments,
+            )
+            for call in (choice.message.tool_calls or [])
+        ]
         return CompletionResult(
             text=choice.message.content or "",
             model=response.model,
             finish_reason=choice.finish_reason,
             usage=_chat_usage(response.usage),
+            tool_calls=tool_calls or None,
         )
 
     async def stream(

@@ -16,7 +16,7 @@ from octave.inference.errors import (
     ModelNotFoundError,
 )
 from octave.inference.openai_adapter import OpenAIAdapter
-from octave.inference.types import CompletionRequest, Message, ToolDefinition
+from octave.inference.types import CompletionRequest, Message, ToolCall, ToolDefinition
 from tests.inference.conformance import InferenceAdapterConformanceSuite
 
 BASE_URL = "http://engine.test/v1"
@@ -346,5 +346,69 @@ async def test_tools_key_absent_when_none_or_empty() -> None:
             )
         )
     assert all("tools" not in json.loads(r.content) for r in captured)
+    await adapter.aclose()
+    await client.aclose()
+
+
+CHAT_RESPONSE_TOOL_CALLS = {
+    "id": "chatcmpl-tc1",
+    "object": "chat.completion",
+    "created": 1725000000,
+    "model": "fake-model",
+    "choices": [
+        {
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "mcp__fs__read",
+                            "arguments": '{"path": "/tmp/x"}',
+                        },
+                    },
+                    {
+                        "id": "call_2",
+                        "type": "function",
+                        "function": {"name": "mcp__fs__list", "arguments": "{}"},
+                    },
+                ],
+            },
+            "finish_reason": "tool_calls",
+        }
+    ],
+    "usage": {"prompt_tokens": 9, "completion_tokens": 12, "total_tokens": 21},
+}
+
+
+async def test_complete_parses_tool_calls() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=CHAT_RESPONSE_TOOL_CALLS)
+
+    client = _mock_client(handler)
+    adapter = _adapter(client)
+    result = await adapter.complete(
+        CompletionRequest(model=None, messages=[Message(role="user", content="hi")])
+    )
+    assert result.finish_reason == "tool_calls"
+    assert result.text == ""  # None content normalized to ""
+    assert result.tool_calls == [
+        ToolCall(id="call_1", name="mcp__fs__read", arguments='{"path": "/tmp/x"}'),
+        ToolCall(id="call_2", name="mcp__fs__list", arguments="{}"),
+    ]
+    await adapter.aclose()
+    await client.aclose()
+
+
+async def test_complete_without_tool_calls_is_none() -> None:
+    client = _mock_client()
+    adapter = _adapter(client)
+    result = await adapter.complete(
+        CompletionRequest(model=None, messages=[Message(role="user", content="hi")])
+    )
+    assert result.tool_calls is None
     await adapter.aclose()
     await client.aclose()

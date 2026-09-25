@@ -412,3 +412,68 @@ async def test_complete_without_tool_calls_is_none() -> None:
     assert result.tool_calls is None
     await adapter.aclose()
     await client.aclose()
+
+
+async def _capture_chat_body(messages: list[Message]) -> dict:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json=CHAT_RESPONSE)
+
+    client = _mock_client(handler)
+    adapter = _adapter(client)
+    await adapter.complete(CompletionRequest(model=None, messages=messages))
+    await adapter.aclose()
+    await client.aclose()
+    return json.loads(captured[0].content)
+
+
+async def test_plain_messages_emit_no_null_tool_fields() -> None:
+    body = await _capture_chat_body(
+        [
+            Message(role="system", content="sys"),
+            Message(role="user", content="hi"),
+            Message(role="assistant", content="yo"),
+        ]
+    )
+    for message in body["messages"]:
+        assert "tool_calls" not in message
+        assert "tool_call_id" not in message
+        assert "name" not in message
+
+
+async def test_assistant_tool_calls_message_uses_provider_envelope() -> None:
+    body = await _capture_chat_body(
+        [
+            Message(role="user", content="hi"),
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[ToolCall(id="call_1", name="mcp__fs__read", arguments='{"p": 1}')],
+            ),
+        ]
+    )
+    assert body["messages"][1] == {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "mcp__fs__read", "arguments": '{"p": 1}'},
+            }
+        ],
+    }
+
+
+async def test_tool_result_message_carries_tool_call_id_and_name() -> None:
+    body = await _capture_chat_body(
+        [Message(role="tool", content="42", tool_call_id="call_1", name="mcp__fs__read")]
+    )
+    assert body["messages"][0] == {
+        "role": "tool",
+        "content": "42",
+        "tool_call_id": "call_1",
+        "name": "mcp__fs__read",
+    }

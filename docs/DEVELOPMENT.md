@@ -204,7 +204,8 @@ The MCP layer (`octave.mcp`) reads `OCTAVE_MCP_*` variables via
 
 | Variable | Default | Description |
 |---|---|---|
-| `OCTAVE_MCP_REQUEST_TIMEOUT_SECONDS` | `30.0` | Per-request timeout for client calls (and the initialize handshake) |
+| `OCTAVE_MCP_REQUEST_TIMEOUT_SECONDS` | `30.0` | Per-request timeout for client calls |
+| `OCTAVE_MCP_INITIALIZE_TIMEOUT_SECONDS` | `30.0` | Budget for the initialize handshake during connect/restart |
 | `OCTAVE_MCP_RESTART_BASE_DELAY_SECONDS` | `1.0` | First auto-restart delay; exponential backoff multiplies by 2 per attempt |
 | `OCTAVE_MCP_RESTART_MAX_DELAY_SECONDS` | `60.0` | Cap on the backoff delay |
 | `OCTAVE_MCP_RESTART_MAX_ATTEMPTS` | `5` | Consecutive failed restart cycles before a server enters `crashed` |

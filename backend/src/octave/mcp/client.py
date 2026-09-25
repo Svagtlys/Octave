@@ -191,7 +191,7 @@ class McpClient:
             await stack.aclose()
             raise McpTimeoutError(
                 f"initialize handshake timed out after "
-                f"{self._settings.request_timeout_seconds}s"
+                f"{self._settings.initialize_timeout_seconds}s"
             ) from exc
         except (FileNotFoundError, PermissionError) as exc:
             await stack.aclose()
@@ -252,13 +252,13 @@ class McpClient:
 
         If the subprocess dies mid-handshake the monitor cancels the scope;
         the death surfaces as ``McpConnectionError`` instead of a misleading
-        ``McpTimeoutError`` after the full request timeout.
+        ``McpTimeoutError`` after the full initialize timeout.
         """
         scope = anyio.CancelScope()
         self._request_scopes.add(scope)
         try:
             with scope:
-                with anyio.fail_after(self._settings.request_timeout_seconds):
+                with anyio.fail_after(self._settings.initialize_timeout_seconds):
                     init = await session.initialize()
         finally:
             self._request_scopes.discard(scope)

@@ -6,7 +6,16 @@ router) land here as additional modules; they do not exist yet.
 """
 
 from octave.agent.errors import ToolLoopLimitError
+from octave.agent.executor import ToolExecutor
+from octave.agent.loop import ToolLoop
 from octave.agent.types import ToolOutcome, ToolTurn
 from octave.tools.errors import ToolError
 
-__all__ = ["ToolError", "ToolLoopLimitError", "ToolOutcome", "ToolTurn"]
+__all__ = [
+    "ToolError",
+    "ToolExecutor",
+    "ToolLoop",
+    "ToolLoopLimitError",
+    "ToolOutcome",
+    "ToolTurn",
+]

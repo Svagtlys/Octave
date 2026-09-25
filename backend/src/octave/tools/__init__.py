@@ -5,12 +5,13 @@ octave.inference. Neither subsystem imports the other; no SDK crosses
 this boundary (guarded by tests/tools/test_package.py).
 """
 
-from octave.tools.errors import ToolNameCollisionError, ToolTranslationError
+from octave.tools.errors import ToolError, ToolNameCollisionError, ToolTranslationError
 from octave.tools.translate import translate_tools
 from octave.tools.types import ProviderToolset, ToolRoute
 
 __all__ = [
     "ProviderToolset",
+    "ToolError",
     "ToolNameCollisionError",
     "ToolRoute",
     "ToolTranslationError",

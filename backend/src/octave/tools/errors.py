@@ -1,10 +1,14 @@
-"""Translation-layer errors (design spec #78)."""
+"""Tool-plane errors (design specs #78, #79)."""
 
-__all__ = ["ToolNameCollisionError", "ToolTranslationError"]
+__all__ = ["ToolError", "ToolNameCollisionError", "ToolTranslationError"]
 
 
-class ToolTranslationError(Exception):
-    """Base for tool translation failures."""
+class ToolError(Exception):
+    """Base for tool-plane failures (translation and orchestration)."""
+
+
+class ToolTranslationError(ToolError):
+    """Base for translation failures."""
 
 
 class ToolNameCollisionError(ToolTranslationError):

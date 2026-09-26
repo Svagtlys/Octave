@@ -27,6 +27,7 @@ from octave.inference.types import (
     EmbeddingResult,
     Message,
     ModelInfo,
+    ToolCall,
     ToolDefinition,
     Usage,
 )
@@ -52,6 +53,7 @@ __all__ = [
     "ModelInfo",
     "ModelNotFoundError",
     "OpenAIAdapter",
+    "ToolCall",
     "ToolDefinition",
     "UnknownAdapterError",
     "Usage",

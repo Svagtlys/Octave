@@ -17,18 +17,38 @@ __all__ = [
     "EmbeddingResult",
     "Message",
     "ModelInfo",
+    "ToolCall",
     "ToolDefinition",
     "Usage",
 ]
 
-Role = Literal["system", "user", "assistant"]
+Role = Literal["system", "user", "assistant", "tool"]
+
+
+class ToolCall(BaseModel):
+    """One tool call as the model requested it.
+
+    ``arguments`` is the raw JSON string from the wire; Octave never
+    interprets it (the adapter stays a lossless translator, the loop parses).
+    """
+
+    id: str
+    name: str
+    arguments: str
 
 
 class Message(BaseModel):
-    """A single chat message."""
+    """A single chat message.
+
+    ``tool_calls`` populates assistant messages; ``tool_call_id`` and ``name``
+    populate ``role="tool"`` result messages (keyed to the call they answer).
+    """
 
     role: Role
     content: str
+    tool_calls: list[ToolCall] | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
 
 
 class ToolDefinition(BaseModel):
@@ -74,6 +94,7 @@ class CompletionResult(BaseModel):
     model: str
     finish_reason: str | None = None
     usage: Usage | None = None
+    tool_calls: list[ToolCall] | None = None
 
 
 class CompletionChunk(BaseModel):

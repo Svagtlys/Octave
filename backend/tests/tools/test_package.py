@@ -4,6 +4,7 @@ import ast
 from pathlib import Path
 
 import octave.tools as tools_pkg
+from octave.tools.errors import ToolError, ToolNameCollisionError, ToolTranslationError
 
 SDK_MODULES = {"openai", "mcp"}
 
@@ -28,9 +29,15 @@ def test_no_sdk_imports() -> None:
 def test_public_names_are_exported() -> None:
     for name in (
         "ProviderToolset",
+        "ToolError",
         "ToolRoute",
         "ToolTranslationError",
         "ToolNameCollisionError",
         "translate_tools",
     ):
         assert hasattr(tools_pkg, name), name
+
+
+def test_tool_error_hierarchy() -> None:
+    assert issubclass(ToolTranslationError, ToolError)
+    assert issubclass(ToolNameCollisionError, ToolTranslationError)

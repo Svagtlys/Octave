@@ -32,7 +32,9 @@ from octave.inference.types import (
     CompletionResult,
     EmbeddingRequest,
     EmbeddingResult,
+    Message,
     ModelInfo,
+    ToolCall,
     Usage,
 )
 
@@ -93,11 +95,20 @@ class OpenAIAdapter(InferenceAdapter):
         except openai.APIError as exc:
             raise _translate(exc) from exc
         choice = response.choices[0]
+        tool_calls = [
+            ToolCall(
+                id=call.id,
+                name=call.function.name,
+                arguments=call.function.arguments,
+            )
+            for call in (choice.message.tool_calls or [])
+        ]
         return CompletionResult(
             text=choice.message.content or "",
             model=response.model,
             finish_reason=choice.finish_reason,
             usage=_chat_usage(response.usage),
+            tool_calls=tool_calls or None,
         )
 
     async def stream(
@@ -158,7 +169,9 @@ class OpenAIAdapter(InferenceAdapter):
     def _chat_kwargs(self, request: CompletionRequest) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "model": self._resolve_model(request.model),
-            "messages": [message.model_dump() for message in request.messages],
+            "messages": [
+                self._message_payload(message) for message in request.messages
+            ],
         }
         if request.temperature is not None:
             kwargs["temperature"] = request.temperature
@@ -176,6 +189,22 @@ class OpenAIAdapter(InferenceAdapter):
         if request.extra:
             kwargs["extra_body"] = dict(request.extra)
         return kwargs
+
+    def _message_payload(self, message: Message) -> dict[str, Any]:
+        """One message as a provider payload. exclude_none keeps tool fields
+        off plain messages (strict local engines reject null tool keys);
+        assistant tool_calls get the provider function-call envelope."""
+        payload = message.model_dump(mode="json", exclude_none=True)
+        if message.tool_calls:
+            payload["tool_calls"] = [
+                {
+                    "id": call.id,
+                    "type": "function",
+                    "function": {"name": call.name, "arguments": call.arguments},
+                }
+                for call in message.tool_calls
+            ]
+        return payload
 
     def _resolve_model(self, requested: str | None) -> str:
         model = requested or self._config.default_model

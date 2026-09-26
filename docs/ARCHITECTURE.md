@@ -70,7 +70,7 @@ Implements the Model Context Protocol client, enabling Octave to discover, manag
 - **Connection Lifecycle** — Start and manual restart (`McpClient.restart()`) with `is_connected` liveness; subprocess exit detected via transport-stream monitoring (fail-fast `McpConnectionError`). Auto-restart policy and health monitoring land with the server lifecycle manager (roadmap #4) *(shipped: `octave.mcp.manager` — per-server supervisors, auto-restart with backoff + crash-loop detection, probe-on-timeout health, PR #93)*
 - **Tool Discovery & Caching** — Fetches tool schemas and descriptions from servers; caches for fast lookup *(shipped: `octave.mcp.registry.ToolRegistry` — fleet-wide inventory cache with event-driven invalidation (restart drift, `tools/list_changed` notifications, warm-up + lazy refresh), PR #98)*
 - **Tool Execution Engine** — Invokes tools with arguments, handles responses and errors, enforces timeouts *(shipped: `ToolRegistry.call_tool` — `(server_id, tool_name)` surface forwarding to `McpClient.call_tool`; timeout/RPC/connection semantics stay the client's, PR #98)*
-- **Schema Translation** — Converts MCP `inputSchema` into the provider-native `tools` array format with `mcp__<server>__<tool>` dedupe and reverse routing *(shipped: `octave.tools.translate_tools` — pure translation into `octave.inference` `ToolDefinition`s carried on `CompletionRequest.tools`; request-side only, response-side tool-call parsing lands with the agent loop, PR #100)*
+- **Schema Translation** — Converts MCP `inputSchema` into the provider-native `tools` array format with `mcp__<server>__<tool>` dedupe and reverse routing *(shipped: `octave.tools.translate_tools` — pure translation into `octave.inference` `ToolDefinition`s carried on `CompletionRequest.tools`, PR #100; response-side `tool_calls` parsing shipped with the agent loop, PR #103)*
 - **Configuration Persistence** — Stores server connection configs in the unified database
 - **Tool Tagging System** — Labels tools with internal Octave tags (e.g., `context_retrieval`, `file_operations`) used by the Context Manager for vault population
 - **Tool Re-naming / Re-describing** — Maps custom agent-facing names and descriptions to underlying MCP tool identifiers, improving clarity for the agent without modifying the MCP server
@@ -125,6 +125,19 @@ Orchestrates agent lifecycles, routes messages between agents and subsystems, an
 - Triggers inference cycles through the **Inference Engine Connector**
 - Sends completed run context to the **Context Manager** for archival
 - Exposes agent status and results to the **Agent Manager View** in the frontend
+
+**Implemented — tool-use orchestration loop (issue #79):** the `octave.agent` package is
+the composition layer and future Agent Manager home. `ToolLoop` drives the
+reason → act → observe cycle: detect `CompletionResult.tool_calls`, resolve exposed
+names through `ProviderToolset.routes` (#78), execute sequentially via the
+`ToolExecutor` Protocol, append provider-invariant tool messages, and re-invoke until a
+final answer (round limit `max_tool_rounds` raises `ToolLoopLimitError` with the partial
+transcript). `McpToolExecutor` wraps `ToolRegistry`, converting `McpError` failures into
+model-correctable error tool messages. `octave.inference` gained the OpenAI-dialect
+vocabulary for this (`ToolCall`, `role="tool"`, tool fields on `Message`). Library-only:
+no routes/lifespan wiring yet — composition arrives with Integration & Testing #1. The
+`openai`/`mcp` SDKs stay quarantined from the package (AST guard). Design:
+[`.agents/specs/2026-09-25-tool-use-orchestration-loop-design.md`](../.agents/specs/2026-09-25-tool-use-orchestration-loop-design.md).
 
 ---
 

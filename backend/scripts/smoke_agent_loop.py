@@ -31,6 +31,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+import anyio
+import httpx
+
 from octave.agent import McpToolExecutor, ToolLoop
 from octave.inference import (
     AdapterConfig,
@@ -50,7 +53,12 @@ DEFAULT_PROMPT = (
 
 
 async def run(
-    *, config: AdapterConfig, directory: Path, prompt: str, max_rounds: int
+    *,
+    config: AdapterConfig,
+    directory: Path,
+    prompt: str,
+    max_rounds: int,
+    ca_bundle: str | None = None,
 ) -> int:
     """Connect the fleet, run one orchestrated turn, verify the tool call."""
     manager = McpServerManager()
@@ -63,10 +71,29 @@ async def run(
         ),
     )
     registry = ToolRegistry(manager=manager)
-    adapter: InferenceAdapter = OpenAIAdapter(config)
+    http_client = (
+        httpx.AsyncClient(verify=ca_bundle) if ca_bundle else None
+    )
+    adapter: InferenceAdapter = OpenAIAdapter(config, http_client=http_client)
     try:
         await manager.start_all()
+        # The registry's warm-up is a background task: wait until the
+        # supervisor reports the server actually connected, then refresh
+        # explicitly so the inventory below is populated.
+        for _ in range(30):
+            state = manager.status_of("fs").state
+            if state in ("connected", "crashed"):
+                break
+            await anyio.sleep(2.0)
+        if state != "connected":
+            status = manager.status_of("fs")
+            print(
+                f"✗ filesystem server state={state} error={status.last_error}",
+                file=sys.stderr,
+            )
+            return 1
         await registry.start()
+        await registry.refresh("fs")
         inventory = await registry.inventory()
         for server in inventory:
             print(f"server:   {server.server_id} — {len(server.tools)} tool(s)")
@@ -142,6 +169,14 @@ def main() -> None:
     )
     parser.add_argument("--prompt", default=DEFAULT_PROMPT, help="User message to send")
     parser.add_argument("--max-rounds", type=int, default=8, help="Tool round limit")
+    parser.add_argument(
+        "--ca-bundle",
+        default=None,
+        help=(
+            "CA bundle for TLS verification (default: certifi). "
+            "For internal CAs try /etc/ssl/certs/ca-certificates.crt"
+        ),
+    )
     parsed = parser.parse_args()
 
     directory: Path = parsed.dir or Path(tempfile.mkdtemp(prefix="octave-smoke-loop-"))
@@ -178,6 +213,7 @@ def main() -> None:
                 directory=directory,
                 prompt=parsed.prompt,
                 max_rounds=parsed.max_rounds,
+                ca_bundle=parsed.ca_bundle,
             )
         )
     )

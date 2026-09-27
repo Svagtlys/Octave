@@ -140,3 +140,27 @@ async def test_get_instance_missing_raises(
     async with session_factory() as session:
         with pytest.raises(InstanceNotFoundError):
             await AgentRegistry(session).get_instance("nope")
+
+
+async def test_count_by_status_zero_filled(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory)
+    async with session_factory() as session:
+        counts = await AgentRegistry(session).count_by_status()
+    assert counts == {InstanceStatus.IDLE: 0, InstanceStatus.ACTIVE: 0}
+
+
+async def test_count_by_status_mixed(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory)
+    await _spawn(session_factory, "a_1", "s_1")
+    await _spawn(session_factory, "a_2", "s_1")
+    i3 = await _spawn(session_factory, "a_1", "s_2")
+    async with session_factory() as session:
+        await AgentInstanceManager(session).begin_turn(i3)
+        await session.commit()
+    async with session_factory() as session:
+        counts = await AgentRegistry(session).count_by_status()
+    assert counts == {InstanceStatus.IDLE: 2, InstanceStatus.ACTIVE: 1}

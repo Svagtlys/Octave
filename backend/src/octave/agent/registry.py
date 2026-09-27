@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from pydantic import TypeAdapter
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from octave.agent.errors import InstanceNotFoundError
@@ -108,3 +108,16 @@ class AgentRegistry:
         if row is None:
             raise InstanceNotFoundError(instance_id)
         return _to_running_agent(row[0], row[1])
+
+    async def count_by_status(self) -> dict[InstanceStatus, int]:
+        """Dashboard counter over all rows (no filters — this is not a
+        filtered aggregate). Both enum keys present, zero-filled."""
+        rows = await self._session.execute(
+            select(AgentInstance.status, func.count()).group_by(
+                AgentInstance.status
+            )
+        )
+        counts = {status: 0 for status in InstanceStatus}
+        for raw, total in rows:
+            counts[InstanceStatus(raw)] += int(total)
+        return counts

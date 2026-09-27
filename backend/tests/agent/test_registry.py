@@ -203,3 +203,52 @@ async def test_bogus_instance_status_fails_loud(
     async with session_factory() as session:
         with pytest.raises(ValueError):
             await AgentRegistry(session).list_instances()
+
+
+async def test_lifecycle_visible_in_registry(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory)
+    instance_id = await _spawn(session_factory, "a_1", "s_1")
+    async with session_factory() as session:
+        [running] = await AgentRegistry(session).list_instances()
+        assert running.instance_status == InstanceStatus.IDLE
+    async with session_factory() as session:
+        await AgentInstanceManager(session).begin_turn(instance_id)
+        await session.commit()
+    async with session_factory() as session:
+        [running] = await AgentRegistry(session).list_instances()
+        assert running.instance_status == InstanceStatus.ACTIVE
+        assert (await AgentRegistry(session).count_by_status())[
+            InstanceStatus.ACTIVE
+        ] == 1
+    async with session_factory() as session:
+        await AgentInstanceManager(session).end_turn(instance_id)
+        await session.commit()
+    async with session_factory() as session:
+        [running] = await AgentRegistry(session).list_instances()
+        assert running.instance_status == InstanceStatus.IDLE
+    async with session_factory() as session:
+        assert await AgentInstanceManager(session).destroy(instance_id) is True
+        await session.commit()
+    async with session_factory() as session:
+        registry = AgentRegistry(session)
+        assert await registry.list_instances() == []
+        assert (await registry.count_by_status())[InstanceStatus.IDLE] == 0
+        with pytest.raises(InstanceNotFoundError):
+            await registry.get_instance(instance_id)
+
+
+async def test_registry_never_mutates(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory)
+    await _spawn(session_factory, "a_1", "s_1")
+    async with session_factory() as session:
+        registry = AgentRegistry(session)
+        [running] = await registry.list_instances()
+        await registry.get_instance(running.instance_id)
+        await registry.count_by_status()
+        assert not session.new and not session.dirty and not session.deleted
+    async with session_factory() as session:
+        assert len(await AgentRegistry(session).list_instances()) == 1

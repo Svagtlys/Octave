@@ -5,11 +5,12 @@ convention: constructed with the caller's AsyncSession, never commits.
 Instances carry no context — the session transcript and the vault own it.
 """
 
+import logging
 import uuid
 from typing import Any, cast
 
 from pydantic import TypeAdapter, ValidationError
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,6 +36,8 @@ from octave.db.models.base import utcnow
 from octave.db.types import AgentStatus, InstanceStatus, ModelBinding
 
 __all__ = ["AgentInstanceManager"]
+
+logger = logging.getLogger(__name__)
 
 _TERMINAL_SESSION_STATUSES = frozenset({"completed", "failed", "cancelled"})
 
@@ -171,6 +174,41 @@ class AgentInstanceManager:
             )
         await self._session.refresh(instance)
         return instance
+
+    async def destroy(self, instance_id: str) -> bool:
+        """Hard-delete the instance binding. False if absent.
+
+        Pure delete by design: no archival hook, nothing to roll back.
+        Archival rides the turn boundary (end_turn), not this call —
+        design spec "Archival Contract".
+        """
+        result = cast(
+            CursorResult[Any],
+            await self._session.execute(
+                delete(AgentInstance).where(AgentInstance.id == instance_id)
+            ),
+        )
+        return bool(result.rowcount)
+
+    async def reconcile(self) -> int:
+        """Reset stale active rows to idle after an unclean shutdown.
+
+        The interrupted turn is already visible as a truncated transcript
+        in events; no zombie states survive restart. Returns rows reset.
+        """
+        result = cast(
+            CursorResult[Any],
+            await self._session.execute(
+                update(AgentInstance)
+                .where(AgentInstance.status == str(InstanceStatus.ACTIVE))
+                .values(status=str(InstanceStatus.IDLE), updated_at=utcnow())
+            ),
+        )
+        if result.rowcount:
+            logger.warning(
+                "reconciled %s stale active instance(s) to idle", result.rowcount
+            )
+        return int(result.rowcount)
 
     async def _get(self, instance_id: str) -> AgentInstance:
         instance = await self._session.get(AgentInstance, instance_id)

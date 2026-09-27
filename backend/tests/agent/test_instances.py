@@ -238,3 +238,58 @@ async def test_end_turn_on_idle_raises(
     async with session_factory() as session:
         with pytest.raises(InvalidTransitionError):
             await AgentInstanceManager(session).end_turn(instance_id)
+
+
+async def test_destroy_deletes_row(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    instance_id = await _spawn_idle(session_factory)
+    async with session_factory() as session:
+        destroyed = await AgentInstanceManager(session).destroy(instance_id)
+        await session.commit()
+        assert destroyed is True
+    async with session_factory() as session:
+        assert await session.get(AgentInstance, instance_id) is None
+
+
+async def test_destroy_absent_returns_false(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        assert await AgentInstanceManager(session).destroy("ghost") is False
+
+
+async def test_destroy_active_is_plain_delete(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """No archival hook, no state precondition — destroy is a delete."""
+    instance_id = await _spawn_idle(session_factory)
+    async with session_factory() as session:
+        manager = AgentInstanceManager(session)
+        await manager.begin_turn(instance_id)
+        assert await manager.destroy(instance_id) is True
+        await session.commit()
+
+
+async def test_reconcile_resets_stale_active(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    instance_id = await _spawn_idle(session_factory)
+    async with session_factory() as session:
+        await AgentInstanceManager(session).begin_turn(instance_id)
+        await session.commit()
+    async with session_factory() as session:
+        reset = await AgentInstanceManager(session).reconcile()
+        await session.commit()
+        assert reset == 1
+    async with session_factory() as session:
+        instance = await session.get(AgentInstance, instance_id)
+        assert instance is not None and instance.status == "idle"
+
+
+async def test_reconcile_noop_when_all_idle(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _spawn_idle(session_factory)
+    async with session_factory() as session:
+        assert await AgentInstanceManager(session).reconcile() == 0

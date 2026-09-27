@@ -1,0 +1,159 @@
+"""AgentInstanceManager lifecycle (design spec 2026-09-27).
+
+One write path, real SQLite, explicit commits — mirrors VaultStore testing.
+"""
+
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from octave.agent.errors import (
+    AgentNotFoundError,
+    AgentPausedError,
+    InstanceExistsError,
+    ModelBindingError,
+    SessionNotFoundError,
+    TerminalSessionError,
+)
+from octave.agent.instances import AgentInstanceManager
+from octave.db.models import (
+    Agent,
+    AgentInstance,
+    Participant,
+    Session,
+    SessionParticipant,
+    User,
+)
+
+_TAG_BINDING = {"kind": "tag", "tag": "quick"}
+
+
+async def _seed_defs(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    agent_status: str = "active",
+    session_status: str = "active",
+    model_binding: dict[str, str] | None = _TAG_BINDING,
+) -> None:
+    """One user, one agent (a_1), one session (s_1); no membership."""
+    async with session_factory() as session:
+        session.add(User(id="u_1", display_name="Alice"))
+        session.add(
+            Agent(
+                id="a_1",
+                name="Octave",
+                status=agent_status,
+                model_binding=model_binding,
+            )
+        )
+        session.add(Session(id="s_1", created_by_user_id="u_1", status=session_status))
+        await session.commit()
+
+
+async def test_spawn_creates_idle_instance_and_membership(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory)
+    async with session_factory() as session:
+        manager = AgentInstanceManager(session)
+        instance = await manager.spawn(agent_id="a_1", session_id="s_1")
+        await session.commit()
+        assert instance.status == "idle"
+        assert instance.agent_id == "a_1" and instance.session_id == "s_1"
+    async with session_factory() as session:
+        members = (await session.execute(select(SessionParticipant))).scalars().all()
+        assert len(members) == 1
+        participant = await session.get(Participant, members[0].participant_id)
+        assert participant is not None and participant.agent_id == "a_1"
+        assert participant.label == "Octave"
+
+
+async def test_spawn_reuses_existing_participant(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory)
+    async with session_factory() as session:
+        session.add(Participant(id="p_agent", agent_id="a_1", label="Octave"))
+        await session.commit()
+    async with session_factory() as session:
+        manager = AgentInstanceManager(session)
+        await manager.spawn(agent_id="a_1", session_id="s_1")
+        await session.commit()
+    async with session_factory() as session:
+        participants = (await session.execute(select(Participant))).scalars().all()
+        assert len(participants) == 1
+
+
+async def test_spawn_paused_agent_raises(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory, agent_status="paused")
+    async with session_factory() as session:
+        with pytest.raises(AgentPausedError):
+            await AgentInstanceManager(session).spawn(agent_id="a_1", session_id="s_1")
+
+
+async def test_spawn_terminal_session_raises(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory, session_status="completed")
+    async with session_factory() as session:
+        with pytest.raises(TerminalSessionError):
+            await AgentInstanceManager(session).spawn(agent_id="a_1", session_id="s_1")
+
+
+async def test_spawn_missing_agent_raises(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory)
+    async with session_factory() as session:
+        with pytest.raises(AgentNotFoundError):
+            await AgentInstanceManager(session).spawn(
+                agent_id="ghost", session_id="s_1"
+            )
+
+
+async def test_spawn_missing_session_raises(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory)
+    async with session_factory() as session:
+        with pytest.raises(SessionNotFoundError):
+            await AgentInstanceManager(session).spawn(
+                agent_id="a_1", session_id="ghost"
+            )
+
+
+async def test_spawn_missing_binding_raises(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory, model_binding=None)
+    async with session_factory() as session:
+        with pytest.raises(ModelBindingError):
+            await AgentInstanceManager(session).spawn(agent_id="a_1", session_id="s_1")
+
+
+async def test_spawn_malformed_binding_raises(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory, model_binding={"kind": "magic"})
+    async with session_factory() as session:
+        with pytest.raises(ModelBindingError):
+            await AgentInstanceManager(session).spawn(agent_id="a_1", session_id="s_1")
+
+
+async def test_spawn_duplicate_raises(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory)
+    async with session_factory() as session:
+        manager = AgentInstanceManager(session)
+        await manager.spawn(agent_id="a_1", session_id="s_1")
+        await session.commit()
+    async with session_factory() as session:
+        with pytest.raises(InstanceExistsError):
+            await AgentInstanceManager(session).spawn(agent_id="a_1", session_id="s_1")
+        count = (
+            await session.execute(select(AgentInstance))
+        ).scalars().all()
+        assert len(count) == 1

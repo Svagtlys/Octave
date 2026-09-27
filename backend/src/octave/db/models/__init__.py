@@ -7,12 +7,14 @@ are TEXT with app-level validation so the enums can grow without migrations.
 
 from octave.db.models.base import Base, utcnow
 from octave.db.models.core import Agent, Participant, User
+from octave.db.models.instances import AgentInstance
 from octave.db.models.mcp import McpServer
 from octave.db.models.sessions import Event, Session, SessionParticipant
 from octave.db.models.vault import VaultItem
 
 __all__ = [
     "Agent",
+    "AgentInstance",
     "Base",
     "Event",
     "McpServer",

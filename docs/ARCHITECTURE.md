@@ -113,7 +113,7 @@ Central knowledge and context assembly subsystem. Manages the context vault — 
 Orchestrates agent lifecycles, routes messages between agents and subsystems, and collects results for inter-agent sharing and context archival.
 
 **Responsibilities:**
-- **Agent Lifecycle Model** — Spawn, pause, resume, and terminate states
+- **Agent Lifecycle Model** — Definition `active|paused` gate; instance spawn → idle ⇄ active → destroy
 - **Agent Registry** — Tracks running agents, their IDs, status, and assigned context
 - **Message Router** — Delivers incoming messages to the correct agent; supports broadcast
 - **Result Collector** — Captures agent outputs and makes them queryable
@@ -139,6 +139,23 @@ no routes/lifespan wiring yet — composition arrives with Integration & Testing
 `openai`/`mcp` SDKs stay quarantined from the package (AST guard). Design:
 [`.agents/specs/2026-09-25-tool-use-orchestration-loop-design.md`](../.agents/specs/2026-09-25-tool-use-orchestration-loop-design.md).
 
+**Implemented — agent lifecycle model (issue #25):** definitions (`agents`) carry a
+definition-level `active|paused` gate, a `model_binding` (tag or explicit
+provider-model pair) and `assignments` (named vault-item references); instances
+(`agent_instances`) are ephemeral one-definition-per-session rows, hard-deleted on
+destroy and carrying no context — the session transcript and the vault own it.
+`AgentInstanceManager` (`octave.agent.instances`) is the single write path, following
+the `VaultStore` convention (caller-supplied `AsyncSession`, never commits): `spawn`
+ensures participant + membership (re-invite resets `left_at`) and fails loud on
+paused definitions, terminal sessions, duplicate bindings, and missing/malformed
+model bindings; `begin_turn` claims the idle→active turn mutex atomically; `destroy`
+is a plain delete (archival rides the turn boundary, decoupled by design);
+`reconcile` resets stale `active` rows to idle after unclean shutdown.
+`resolve_model` resolves a binding to a concrete (adapter, model) pair at turn start,
+fail-loud on tag misses (tag→model lookup lands with Inference #7). Library-only: no
+routes/lifespan wiring yet. Design:
+[`.agents/specs/2026-09-27-agent-lifecycle-model-design.md`](../.agents/specs/2026-09-27-agent-lifecycle-model-design.md).
+
 ---
 
 ## Data Layer
@@ -160,7 +177,9 @@ the inference adapter pattern:
   vec0 virtual table, not Alembic-managed; `vault_items.embedding` is the
   engine-neutral cache and `content` is the source of truth
 - Stores: MCP server configs, vault items with embeddings, session transcripts,
-  agent registry entries
+  agent registry entries (`agents`: `model_binding`/`assignments` JSON,
+  `active|paused` gate) and live instance bindings (`agent_instances`: unique
+  agent×session, RESTRICT on definition delete, CASCADE on session delete)
 
 ---
 

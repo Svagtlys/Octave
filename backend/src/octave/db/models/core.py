@@ -7,8 +7,9 @@ addressed to another — no special machinery.
 """
 
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import CheckConstraint, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import JSON, CheckConstraint, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from octave.db.models.base import Base, UTCDateTime, utcnow
@@ -33,19 +34,28 @@ class User(Base):
 
 
 class Agent(Base):
-    """The Agent Registry. An agent is NOT a subtype of user: it has model
-    tags and a lifecycle, and it never owns data (``sessions``/``vault_items``
+    """The Agent Registry. An agent is NOT a subtype of user: it has a model
+    binding, a lifecycle, and it never owns data (``sessions``/``vault_items``
     point at ``users``)."""
 
     __tablename__ = "agents"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    model_tag: Mapped[str | None] = mapped_column(Text)
-    """Capability tag (``thinking``/``coding``/``quick``); tag-driven wiring."""
+    model_binding: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    """``octave.db.types.ModelBinding`` JSON: tag or explicit provider-model
+    pair. App-validated at write time; NULL means "unusable" — spawn fails
+    loud on it."""
+
+    assignments: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    """``octave.db.types.AgentAssignments`` JSON: named vault-item references
+    (prompt / skills / preference_tags)."""
 
     status: Mapped[str] = mapped_column(Text, nullable=False, default="active")
-    """``active | paused | terminated`` — app-validated, TEXT by design."""
+    """``active | paused`` (AgentStatus, app-validated) — definition-level
+    gate; instance lifecycle lives in ``agent_instances``."""
 
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=utcnow, nullable=False

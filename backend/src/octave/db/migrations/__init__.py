@@ -37,15 +37,16 @@ def _config(sync_url: str) -> Config:
     return cfg
 
 
-def upgrade(sync_url: str) -> None:
-    """Apply all pending migrations to ``sync_url``. Idempotent.
+def upgrade(sync_url: str, revision: str = "head") -> None:
+    """Apply migrations to ``revision`` (default: head). Idempotent.
 
     Raises ``DbMigrationError`` on failure; Alembic's own exceptions never
-    escape this module.
+    escape this module. The ``revision`` parameter exists for tests that
+    seed data at an older schema revision.
     """
-    logger.info("applying migrations to %s", sync_url)
+    logger.info("applying migrations to %s (target %s)", sync_url, revision)
     try:
-        _alembic_upgrade(_config(sync_url), "head")
+        _alembic_upgrade(_config(sync_url), revision)
     except Exception as exc:  # Alembic raises broad; translate at the boundary
         logger.exception("migration failed for %s", sync_url)
         raise DbMigrationError(f"migration failed: {exc}") from exc

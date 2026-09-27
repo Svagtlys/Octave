@@ -1,10 +1,11 @@
 """Migrations run programmatically against a temp SQLite file."""
 
+import json
 from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 from octave.db.errors import DbMigrationError
 from octave.db.migrations import current, upgrade
@@ -18,6 +19,7 @@ EXPECTED_TABLES = {
     "events",
     "mcp_servers",
     "vault_items",
+    "agent_instances",
 }
 
 
@@ -109,3 +111,26 @@ def _fks(insp: Any, table: str) -> set[tuple[str, ...]]:
         (fk["name"] or "", tuple(fk["constrained_columns"]), fk["referred_table"])
         for fk in insp.get_foreign_keys(table)
     }
+
+
+def test_model_tag_migrates_to_tag_binding(tmp_path: Path) -> None:
+    """Old ``model_tag`` values survive as tag-form ``model_binding``."""
+    url = f"sqlite:///{tmp_path / 'mig.db'}"
+    upgrade(url, revision="4bf075ee2ede")  # pre-rework schema
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO agents (id, name, model_tag, status, created_at) "
+                "VALUES ('a_1', 'Octave', 'quick', 'active', '2026-01-01 00:00:00')"
+            )
+        )
+    engine.dispose()
+    upgrade(url)  # to head
+    engine = create_engine(url)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT model_binding FROM agents WHERE id = 'a_1'")
+        ).one()
+    engine.dispose()
+    assert json.loads(row.model_binding) == {"kind": "tag", "tag": "quick"}

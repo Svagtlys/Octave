@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from octave.db.models import (
     Agent,
+    AgentInstance,
     Event,
     McpServer,
     Participant,
@@ -22,7 +23,11 @@ async def test_identity_round_trip(
 ) -> None:
     async with session_factory() as session:
         session.add(User(id="u_1", display_name="Alice"))
-        session.add(Agent(id="a_1", name="Octave", model_tag="quick"))
+        session.add(
+            Agent(
+                id="a_1", name="Octave", model_binding={"kind": "tag", "tag": "quick"}
+            )
+        )
         session.add(Participant(id="p_1", user_id="u_1", label="Alice"))
         session.add(Participant(id="p_2", agent_id="a_1", label="Octave"))
         await session.commit()
@@ -352,3 +357,94 @@ async def test_vault_item_fk_to_user_enforced(
         )
         with pytest.raises(IntegrityError):
             await session.commit()
+
+
+async def test_agent_binding_and_assignments_round_trip(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(
+            Agent(
+                id="a_1",
+                name="Octave",
+                model_binding={"kind": "tag", "tag": "quick"},
+                assignments={"skills": ["vi_1"]},
+            )
+        )
+        await session.commit()
+        agent = await session.get(Agent, "a_1")
+        assert agent is not None
+        assert agent.model_binding == {"kind": "tag", "tag": "quick"}
+        assert agent.assignments == {"skills": ["vi_1"]}
+
+
+async def test_agent_assignments_default_empty(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(Agent(id="a_1", name="Octave"))
+        await session.commit()
+        agent = await session.get(Agent, "a_1")
+        assert agent is not None and agent.assignments == {}
+
+
+async def _seed_agent_session(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """One user, one agent, one session — no membership yet."""
+    async with session_factory() as session:
+        session.add(User(id="u_1", display_name="Alice"))
+        session.add(Agent(id="a_1", name="Octave"))
+        session.add(Session(id="s_1", created_by_user_id="u_1"))
+        await session.commit()
+
+
+async def test_instance_status_defaults_idle(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_agent_session(session_factory)
+    async with session_factory() as session:
+        session.add(AgentInstance(id="i_1", agent_id="a_1", session_id="s_1"))
+        await session.commit()
+        instance = await session.get(AgentInstance, "i_1")
+        assert instance is not None and instance.status == "idle"
+
+
+async def test_instance_unique_per_agent_session(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_agent_session(session_factory)
+    async with session_factory() as session:
+        session.add(AgentInstance(id="i_1", agent_id="a_1", session_id="s_1"))
+        session.add(AgentInstance(id="i_2", agent_id="a_1", session_id="s_1"))
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+
+async def test_agent_delete_restricted_while_instance_exists(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_agent_session(session_factory)
+    async with session_factory() as session:
+        session.add(AgentInstance(id="i_1", agent_id="a_1", session_id="s_1"))
+        await session.commit()
+    async with session_factory() as session:
+        agent = await session.get(Agent, "a_1")
+        await session.delete(agent)
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+
+async def test_session_delete_cascades_instances(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_agent_session(session_factory)
+    async with session_factory() as session:
+        session.add(AgentInstance(id="i_1", agent_id="a_1", session_id="s_1"))
+        await session.commit()
+    async with session_factory() as session:
+        sess = await session.get(Session, "s_1")
+        await session.delete(sess)
+        await session.commit()
+    async with session_factory() as session:
+        assert await session.get(AgentInstance, "i_1") is None

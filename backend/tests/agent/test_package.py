@@ -27,12 +27,25 @@ def test_no_sdk_imports() -> None:
 
 def test_public_names_are_exported() -> None:
     for name in (
+        "AgentError",
+        "AgentInstanceManager",
+        "AgentNotFoundError",
+        "AgentPausedError",
+        "InstanceExistsError",
+        "InstanceNotFoundError",
+        "InvalidTransitionError",
         "McpToolExecutor",
+        "ModelBindingError",
+        "ResolvedModel",
+        "SessionNotFoundError",
+        "TerminalSessionError",
         "ToolError",
         "ToolExecutor",
         "ToolLoop",
         "ToolLoopLimitError",
         "ToolOutcome",
         "ToolTurn",
+        "TurnInProgressError",
+        "resolve_model",
     ):
         assert hasattr(agent_pkg, name), name

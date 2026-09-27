@@ -13,12 +13,19 @@ JSON dicts until their consumers exist.
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Annotated, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
+    "AgentAssignments",
+    "AgentStatus",
     "AssistantMessagePayload",
     "EventKind",
+    "ExplicitModelBinding",
+    "InstanceStatus",
+    "ModelBinding",
+    "TagModelBinding",
     "UserMessagePayload",
     "VaultKind",
     "VectorHit",
@@ -48,6 +55,60 @@ class VaultKind(StrEnum):
     PREFERENCE = "preference"
     RUN_SUMMARY = "run_summary"
     RUN_RECORD = "run_record"
+
+
+class AgentStatus(StrEnum):
+    """Definition-level gate for spawning and turns. Stored verbatim in
+    ``agents.status``. ``paused`` means "do not run this agent anywhere" —
+    session-scoped refusal is turn policy, not agent status (design spec)."""
+
+    ACTIVE = "active"
+    PAUSED = "paused"
+
+
+class InstanceStatus(StrEnum):
+    """Runtime state of one agent instance. Stored verbatim in
+    ``agent_instances.status``. There is no ``failed``: turn failures are
+    events in the session, and sessions own ``failed``."""
+
+    IDLE = "idle"
+    ACTIVE = "active"
+
+
+class TagModelBinding(BaseModel):
+    """Capability-tag binding, resolved at turn start via model tagging."""
+
+    kind: Literal["tag"]
+    tag: str
+
+
+class ExplicitModelBinding(BaseModel):
+    """Direct provider-model pair; adapter existence validated at
+    definition-save time (follow-up issue), not at turn start."""
+
+    kind: Literal["explicit"]
+    adapter: str
+    model: str
+
+
+ModelBinding = Annotated[
+    TagModelBinding | ExplicitModelBinding, Field(discriminator="kind")
+]
+
+
+class AgentAssignments(BaseModel):
+    """Named vault-item references assigned to a definition.
+
+    References are app-validated strings; dangling references are tolerated
+    at resolution time (skip + warn). Link-table promotion triggers live in
+    the design spec. Extra keys allowed, mirroring the ``vault_items.meta``
+    convention (ADR 2026-09-20)."""
+
+    model_config = ConfigDict(extra="allow")
+
+    prompt: str | None = None
+    skills: list[str] = Field(default_factory=list)
+    preference_tags: list[str] = Field(default_factory=list)
 
 
 @dataclass(frozen=True)

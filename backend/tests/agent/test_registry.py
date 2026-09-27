@@ -4,12 +4,15 @@ Read-only queries over the #25 substrate: real SQLite via session_factory,
 spawns driven through AgentInstanceManager (the only write path).
 """
 
+import logging
+
 import pytest
+from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from octave.agent import AgentInstanceManager, InstanceNotFoundError
 from octave.agent.registry import AgentRegistry
-from octave.db.models import Agent, Session, User
+from octave.db.models import Agent, AgentInstance, Session, User
 from octave.db.types import InstanceStatus
 
 _TAG_BINDING = {"kind": "tag", "tag": "quick"}
@@ -164,3 +167,39 @@ async def test_count_by_status_mixed(
     async with session_factory() as session:
         counts = await AgentRegistry(session).count_by_status()
     assert counts == {InstanceStatus.IDLE: 2, InstanceStatus.ACTIVE: 1}
+
+
+async def test_corrupt_assignments_warn_and_empty(
+    session_factory: async_sessionmaker[AsyncSession], caplog
+) -> None:
+    await _seed_defs(session_factory)
+    await _spawn(session_factory, "a_1", "s_1")
+    async with session_factory() as session:
+        await session.execute(
+            update(Agent).where(Agent.id == "a_1").values(assignments={"skills": "not-a-list"})
+        )
+        await session.commit()
+    with caplog.at_level(logging.WARNING, logger="octave.agent.registry"):
+        async with session_factory() as session:
+            [running] = await AgentRegistry(session).list_instances()
+    assert running.assignments.prompt is None
+    assert running.assignments.skills == []
+    assert running.assignments.preference_tags == []
+    assert "invalid assignments" in caplog.text
+
+
+async def test_bogus_instance_status_fails_loud(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory)
+    instance_id = await _spawn(session_factory, "a_1", "s_1")
+    async with session_factory() as session:
+        await session.execute(
+            update(AgentInstance)
+            .where(AgentInstance.id == instance_id)
+            .values(status="bogus")
+        )
+        await session.commit()
+    async with session_factory() as session:
+        with pytest.raises(ValueError):
+            await AgentRegistry(session).list_instances()

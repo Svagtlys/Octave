@@ -12,7 +12,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,10 +45,23 @@ class RunningAgent:
     updated_at: datetime
 
 
+def _parse_assignments(agent: Agent) -> AgentAssignments:
+    """Lenient by design (reporting surface, not a validation gate):
+    malformed references are a write-path bug, and a registry that raises
+    because one definition row is corrupt would hide it worse. Mirrors the
+    #25 dangling-reference rule — skip + warn."""
+    try:
+        return _ASSIGNMENTS_ADAPTER.validate_python(agent.assignments)
+    except ValidationError:
+        logger.warning(
+            "agent %s has invalid assignments JSON; reporting empty", agent.id
+        )
+        return AgentAssignments()
+
+
 def _to_running_agent(instance: AgentInstance, agent: Agent) -> RunningAgent:
-    """Status parses are loud (a bad enum value is DB corruption; silently
-    coercing it would misreport lifecycle state). Assignments parsing is
-    made lenient in Task 4 (reporting surface, not a validation gate)."""
+    """Status parses stay loud (a bad enum value is DB corruption; silently
+    coercing it would misreport lifecycle state)."""
     return RunningAgent(
         instance_id=instance.id,
         agent_id=instance.agent_id,
@@ -56,7 +69,7 @@ def _to_running_agent(instance: AgentInstance, agent: Agent) -> RunningAgent:
         definition_status=AgentStatus(agent.status),
         instance_status=InstanceStatus(instance.status),
         session_id=instance.session_id,
-        assignments=_ASSIGNMENTS_ADAPTER.validate_python(agent.assignments),
+        assignments=_parse_assignments(agent),
         created_at=instance.created_at,
         updated_at=instance.updated_at,
     )

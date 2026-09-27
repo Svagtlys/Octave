@@ -104,7 +104,7 @@
 
 ## Agent Manager
 
-- [ ] 1. Design agent lifecycle model (spawn, pause, resume, terminate states)
+- [x] 1. Design agent lifecycle model (definition active/paused gate; instance spawn → idle ⇄ active → destroy) — PR #105 (lifecycle vocabulary, `agent_instances` table, `AgentInstanceManager`; router/registry/scheduling remain #2–6)
 - [ ] 2. Build agent registry (track running agents, their IDs, status, and assigned context)
 - [ ] 3. Implement agent message routing (deliver messages to correct agent, broadcast when needed)
 - [ ] 4. Create agent result collection (capture agent outputs and make them queryable)

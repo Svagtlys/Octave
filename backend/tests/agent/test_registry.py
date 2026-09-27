@@ -4,9 +4,10 @@ Read-only queries over the #25 substrate: real SQLite via session_factory,
 spawns driven through AgentInstanceManager (the only write path).
 """
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from octave.agent import AgentInstanceManager
+from octave.agent import AgentInstanceManager, InstanceNotFoundError
 from octave.agent.registry import AgentRegistry
 from octave.db.models import Agent, Session, User
 from octave.db.types import InstanceStatus
@@ -118,3 +119,24 @@ async def test_list_ordering_deterministic(
     keys = [(r.created_at, r.instance_id) for r in rows]
     assert keys == sorted(keys)
     assert {r.instance_id for r in rows} == set(ids)
+
+
+async def test_get_instance_returns_joined_record(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory)
+    instance_id = await _spawn(session_factory, "a_1", "s_1")
+    async with session_factory() as session:
+        running = await AgentRegistry(session).get_instance(instance_id)
+    assert running.instance_id == instance_id
+    assert running.agent_name == "Octave"
+    assert running.assignments.prompt == "v_p"
+
+
+async def test_get_instance_missing_raises(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    await _seed_defs(session_factory)
+    async with session_factory() as session:
+        with pytest.raises(InstanceNotFoundError):
+            await AgentRegistry(session).get_instance("nope")

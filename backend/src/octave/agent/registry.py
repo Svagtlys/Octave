@@ -16,6 +16,7 @@ from pydantic import TypeAdapter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from octave.agent.errors import InstanceNotFoundError
 from octave.db.models import Agent, AgentInstance
 from octave.db.types import AgentAssignments, AgentStatus, InstanceStatus
 
@@ -94,3 +95,16 @@ class AgentRegistry:
             stmt = stmt.where(AgentInstance.status == str(status))
         rows = await self._session.execute(stmt)
         return [_to_running_agent(inst, ag) for inst, ag in rows]
+
+    async def get_instance(self, instance_id: str) -> RunningAgent:
+        """Raise on miss — same contract as the manager's ``_get``."""
+        row = (
+            await self._session.execute(
+                select(AgentInstance, Agent)
+                .join(Agent, AgentInstance.agent_id == Agent.id)
+                .where(AgentInstance.id == instance_id)
+            )
+        ).first()
+        if row is None:
+            raise InstanceNotFoundError(instance_id)
+        return _to_running_agent(row[0], row[1])

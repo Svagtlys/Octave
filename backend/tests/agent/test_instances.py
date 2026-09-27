@@ -18,7 +18,11 @@ from octave.agent.errors import (
     TerminalSessionError,
     TurnInProgressError,
 )
-from octave.agent.instances import AgentInstanceManager
+from octave.agent.instances import (
+    AgentInstanceManager,
+    ResolvedModel,
+    resolve_model,
+)
 from octave.db.models import (
     Agent,
     AgentInstance,
@@ -27,6 +31,7 @@ from octave.db.models import (
     SessionParticipant,
     User,
 )
+from octave.db.types import ExplicitModelBinding, TagModelBinding
 
 _TAG_BINDING = {"kind": "tag", "tag": "quick"}
 
@@ -293,3 +298,29 @@ async def test_reconcile_noop_when_all_idle(
     await _spawn_idle(session_factory)
     async with session_factory() as session:
         assert await AgentInstanceManager(session).reconcile() == 0
+
+
+def test_resolve_explicit_binding() -> None:
+    resolved = resolve_model(
+        ExplicitModelBinding(kind="explicit", adapter="openai", model="llama3")
+    )
+    assert resolved == ResolvedModel(adapter="openai", model="llama3")
+
+
+def test_resolve_tag_binding_with_lookup() -> None:
+    resolved = resolve_model(
+        TagModelBinding(kind="tag", tag="quick"), tag_lookup=lambda tag: "llama3"
+    )
+    assert resolved == ResolvedModel(adapter=None, model="llama3")
+
+
+def test_resolve_tag_miss_raises() -> None:
+    with pytest.raises(ModelBindingError):
+        resolve_model(
+            TagModelBinding(kind="tag", tag="nope"), tag_lookup=lambda t: None
+        )
+
+
+def test_resolve_tag_without_lookup_raises() -> None:
+    with pytest.raises(ModelBindingError):
+        resolve_model(TagModelBinding(kind="tag", tag="quick"))

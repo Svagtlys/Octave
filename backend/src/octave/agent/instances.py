@@ -7,6 +7,8 @@ Instances carry no context — the session transcript and the vault own it.
 
 import logging
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any, cast
 
 from pydantic import TypeAdapter, ValidationError
@@ -33,9 +35,14 @@ from octave.db.models import (
     SessionParticipant,
 )
 from octave.db.models.base import utcnow
-from octave.db.types import AgentStatus, InstanceStatus, ModelBinding
+from octave.db.types import (
+    AgentStatus,
+    ExplicitModelBinding,
+    InstanceStatus,
+    ModelBinding,
+)
 
-__all__ = ["AgentInstanceManager"]
+__all__ = ["AgentInstanceManager", "ResolvedModel", "resolve_model"]
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +62,40 @@ def _validate_binding(agent: Agent) -> None:
         raise ModelBindingError(
             f"agent {agent.id} has invalid model_binding: {exc}"
         ) from exc
+
+
+@dataclass(frozen=True)
+class ResolvedModel:
+    """Concrete (adapter, model) pair for a turn. ``adapter=None`` means
+    "use the configured default adapter" (tag bindings defer engine
+    selection to the inference layer)."""
+
+    adapter: str | None
+    model: str
+
+
+def resolve_model(
+    binding: ModelBinding,
+    *,
+    tag_lookup: Callable[[str], str | None] | None = None,
+) -> ResolvedModel:
+    """Resolve a binding to a concrete pair at turn start.
+
+    ``tag_lookup`` maps a capability tag to a model name; the turn runner
+    wires it once model tagging lands (Inference roadmap #7). A tag miss
+    fails loud — an agent with no usable model is unusable, and silent
+    fallback would hide misconfiguration (design spec §4).
+    """
+    if isinstance(binding, ExplicitModelBinding):
+        return ResolvedModel(adapter=binding.adapter, model=binding.model)
+    if tag_lookup is None:
+        raise ModelBindingError(
+            f"tag binding {binding.tag!r} requires a tag_lookup"
+        )
+    model = tag_lookup(binding.tag)
+    if model is None:
+        raise ModelBindingError(f"model tag {binding.tag!r} resolves to nothing")
+    return ResolvedModel(adapter=None, model=model)
 
 
 class AgentInstanceManager:

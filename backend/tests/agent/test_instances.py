@@ -11,9 +11,12 @@ from octave.agent.errors import (
     AgentNotFoundError,
     AgentPausedError,
     InstanceExistsError,
+    InstanceNotFoundError,
+    InvalidTransitionError,
     ModelBindingError,
     SessionNotFoundError,
     TerminalSessionError,
+    TurnInProgressError,
 )
 from octave.agent.instances import AgentInstanceManager
 from octave.db.models import (
@@ -157,3 +160,81 @@ async def test_spawn_duplicate_raises(
             await session.execute(select(AgentInstance))
         ).scalars().all()
         assert len(count) == 1
+
+
+async def _spawn_idle(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> str:
+    """Seed defs, spawn, commit; return the instance id."""
+    await _seed_defs(session_factory)
+    async with session_factory() as session:
+        instance = await AgentInstanceManager(session).spawn(
+            agent_id="a_1", session_id="s_1"
+        )
+        await session.commit()
+        return instance.id
+
+
+async def test_begin_turn_activates(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    instance_id = await _spawn_idle(session_factory)
+    async with session_factory() as session:
+        instance = await AgentInstanceManager(session).begin_turn(instance_id)
+        await session.commit()
+        assert instance.status == "active"
+
+
+async def test_begin_turn_twice_raises(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    instance_id = await _spawn_idle(session_factory)
+    async with session_factory() as session:
+        await AgentInstanceManager(session).begin_turn(instance_id)
+        await session.commit()
+    async with session_factory() as session:
+        with pytest.raises(TurnInProgressError):
+            await AgentInstanceManager(session).begin_turn(instance_id)
+
+
+async def test_begin_turn_paused_agent_raises(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    instance_id = await _spawn_idle(session_factory)
+    async with session_factory() as session:
+        agent = await session.get(Agent, "a_1")
+        assert agent is not None
+        agent.status = "paused"
+        await session.commit()
+    async with session_factory() as session:
+        with pytest.raises(AgentPausedError):
+            await AgentInstanceManager(session).begin_turn(instance_id)
+
+
+async def test_begin_turn_missing_instance_raises(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        with pytest.raises(InstanceNotFoundError):
+            await AgentInstanceManager(session).begin_turn("ghost")
+
+
+async def test_end_turn_idles(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    instance_id = await _spawn_idle(session_factory)
+    async with session_factory() as session:
+        manager = AgentInstanceManager(session)
+        await manager.begin_turn(instance_id)
+        instance = await manager.end_turn(instance_id)
+        await session.commit()
+        assert instance.status == "idle"
+
+
+async def test_end_turn_on_idle_raises(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    instance_id = await _spawn_idle(session_factory)
+    async with session_factory() as session:
+        with pytest.raises(InvalidTransitionError):
+            await AgentInstanceManager(session).end_turn(instance_id)

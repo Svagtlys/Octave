@@ -6,9 +6,11 @@ Instances carry no context — the session transcript and the vault own it.
 """
 
 import uuid
+from typing import Any, cast
 
 from pydantic import TypeAdapter, ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from octave.agent.errors import (
@@ -16,9 +18,11 @@ from octave.agent.errors import (
     AgentPausedError,
     InstanceExistsError,
     InstanceNotFoundError,
+    InvalidTransitionError,
     ModelBindingError,
     SessionNotFoundError,
     TerminalSessionError,
+    TurnInProgressError,
 )
 from octave.db.models import (
     Agent,
@@ -27,6 +31,7 @@ from octave.db.models import (
     Session,
     SessionParticipant,
 )
+from octave.db.models.base import utcnow
 from octave.db.types import AgentStatus, InstanceStatus, ModelBinding
 
 __all__ = ["AgentInstanceManager"]
@@ -110,6 +115,61 @@ class AgentInstanceManager:
         )
         self._session.add(instance)
         await self._session.flush()
+        return instance
+
+    async def begin_turn(self, instance_id: str) -> AgentInstance:
+        """Atomically claim the idle→active transition (the turn mutex).
+
+        Re-checks the definition gate: a pause after spawn blocks new
+        turns; it never interrupts an active one (pause is a gate, not an
+        interrupt). Rowcount 0 means someone else holds the turn.
+        """
+        instance = await self._get(instance_id)
+        agent = await self._session.get(Agent, instance.agent_id)
+        if agent is None:  # RESTRICT makes this unreachable; defensive
+            raise AgentNotFoundError(instance.agent_id)
+        if agent.status != AgentStatus.ACTIVE:
+            raise AgentPausedError(instance.agent_id)
+        result = cast(
+            CursorResult[Any],
+            await self._session.execute(
+                update(AgentInstance)
+                .where(
+                    AgentInstance.id == instance_id,
+                    AgentInstance.status == str(InstanceStatus.IDLE),
+                )
+                .values(status=str(InstanceStatus.ACTIVE), updated_at=utcnow())
+            ),
+        )
+        if not result.rowcount:
+            raise TurnInProgressError(instance_id)
+        await self._session.refresh(instance)
+        return instance
+
+    async def end_turn(self, instance_id: str) -> AgentInstance:
+        """Release the turn: active→idle. Turn failures use this too —
+        the error is an event in the session, not instance state."""
+        instance = await self._get(instance_id)
+        if instance.status == str(InstanceStatus.IDLE):
+            raise InvalidTransitionError(
+                f"instance {instance_id}: end_turn requires active, got idle"
+            )
+        result = cast(
+            CursorResult[Any],
+            await self._session.execute(
+                update(AgentInstance)
+                .where(
+                    AgentInstance.id == instance_id,
+                    AgentInstance.status == str(InstanceStatus.ACTIVE),
+                )
+                .values(status=str(InstanceStatus.IDLE), updated_at=utcnow())
+            ),
+        )
+        if not result.rowcount:
+            raise InvalidTransitionError(
+                f"instance {instance_id}: turn ended concurrently"
+            )
+        await self._session.refresh(instance)
         return instance
 
     async def _get(self, instance_id: str) -> AgentInstance:

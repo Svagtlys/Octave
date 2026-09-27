@@ -176,7 +176,9 @@ async def test_corrupt_assignments_warn_and_empty(
     await _spawn(session_factory, "a_1", "s_1")
     async with session_factory() as session:
         await session.execute(
-            update(Agent).where(Agent.id == "a_1").values(assignments={"skills": "not-a-list"})
+            update(Agent)
+            .where(Agent.id == "a_1")
+            .values(assignments={"skills": "not-a-list"})
         )
         await session.commit()
     with caplog.at_level(logging.WARNING, logger="octave.agent.registry"):

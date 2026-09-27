@@ -156,6 +156,17 @@ fail-loud on tag misses (tag→model lookup lands with Inference #7). Library-on
 routes/lifespan wiring yet. Design:
 [`.agents/specs/2026-09-27-agent-lifecycle-model-design.md`](../.agents/specs/2026-09-27-agent-lifecycle-model-design.md).
 
+**Implemented — agent registry (issue #26):** `AgentRegistry` (`octave.agent.registry`)
+is the read-only source-of-truth view over `agent_instances ⋈ agents` — `list_instances`
+(filters: `agent_id`/`session_id`/instance `status`, AND-composed; deterministic
+`created_at, id` ordering), `get_instance` (raises `InstanceNotFoundError`), and
+`count_by_status` (zero-filled per-enum dashboard counter). Returns frozen
+`RunningAgent` read models; same `VaultStore` convention (caller-supplied
+`AsyncSession`, never commits, never mutates — `AgentInstanceManager` stays the only
+write path). Malformed `assignments` JSON degrades to empty with a warning (reporting
+surface); bad status enums fail loud. Library-only: no routes. Design:
+[`.agents/specs/2026-09-27-agent-registry-design.md`](../.agents/specs/2026-09-27-agent-registry-design.md).
+
 ---
 
 ## Data Layer

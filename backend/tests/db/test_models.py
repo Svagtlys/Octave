@@ -22,7 +22,11 @@ async def test_identity_round_trip(
 ) -> None:
     async with session_factory() as session:
         session.add(User(id="u_1", display_name="Alice"))
-        session.add(Agent(id="a_1", name="Octave", model_tag="quick"))
+        session.add(
+            Agent(
+                id="a_1", name="Octave", model_binding={"kind": "tag", "tag": "quick"}
+            )
+        )
         session.add(Participant(id="p_1", user_id="u_1", label="Alice"))
         session.add(Participant(id="p_2", agent_id="a_1", label="Octave"))
         await session.commit()
@@ -352,3 +356,32 @@ async def test_vault_item_fk_to_user_enforced(
         )
         with pytest.raises(IntegrityError):
             await session.commit()
+
+
+async def test_agent_binding_and_assignments_round_trip(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(
+            Agent(
+                id="a_1",
+                name="Octave",
+                model_binding={"kind": "tag", "tag": "quick"},
+                assignments={"skills": ["vi_1"]},
+            )
+        )
+        await session.commit()
+        agent = await session.get(Agent, "a_1")
+        assert agent is not None
+        assert agent.model_binding == {"kind": "tag", "tag": "quick"}
+        assert agent.assignments == {"skills": ["vi_1"]}
+
+
+async def test_agent_assignments_default_empty(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(Agent(id="a_1", name="Octave"))
+        await session.commit()
+        agent = await session.get(Agent, "a_1")
+        assert agent is not None and agent.assignments == {}

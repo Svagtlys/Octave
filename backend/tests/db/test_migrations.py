@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "events",
     "mcp_servers",
     "vault_items",
+    "agent_instances",
 }
 
 

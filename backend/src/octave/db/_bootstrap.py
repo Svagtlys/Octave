@@ -17,9 +17,11 @@ from typing import Any
 
 import aiosqlite
 import sqlite_vec
+from sqlalchemy import event
 from sqlalchemy.engine import URL
+from sqlalchemy.ext.asyncio import AsyncEngine
 
-__all__ = ["make_async_creator"]
+__all__ = ["attach_transaction_control", "make_async_creator"]
 
 logger = logging.getLogger(__name__)
 
@@ -43,3 +45,30 @@ def make_async_creator(url: URL) -> Callable[[], Awaitable[Any]]:
         return conn
 
     return _connect
+
+
+def attach_transaction_control(engine: AsyncEngine) -> None:
+    """Give SQLite connections explicit transaction control (issue #27).
+
+    Under pysqlite's default ``isolation_level=""``, ``SAVEPOINT`` opens an
+    implicit transaction and ``RELEASE SAVEPOINT`` *commits it* — so
+    ``session.begin_nested()`` (EventStore's seq-collision retry) silently
+    commits the caller's whole pending transaction, breaking the
+    "stores never commit; callers own the transaction boundary" convention.
+
+    SQLAlchemy's documented remedy for pysqlite, verified to work through
+    the ``async_creator`` path: disable the DBAPI's implicit-BEGIN behavior
+    (``isolation_level = None``) and emit an explicit ``BEGIN`` whenever
+    SQLAlchemy starts a root transaction. Savepoints then nest, roll back
+    to their savepoint, and release without committing.
+
+    Call exactly once per engine, immediately after ``create_async_engine``.
+    """
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _disable_implicit_begin(dbapi_conn: Any, _conn_record: Any) -> None:
+        dbapi_conn.isolation_level = None
+
+    @event.listens_for(engine.sync_engine, "begin")
+    def _emit_explicit_begin(conn: Any) -> None:
+        conn.exec_driver_sql("BEGIN")

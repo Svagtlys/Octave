@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from octave.db._bootstrap import make_async_creator
+from octave.db._bootstrap import attach_transaction_control, make_async_creator
 from octave.db.adapter import DbAdapter
 from octave.db.errors import DbDimensionMismatchError, DbError
 from octave.db.registry import register_db
@@ -45,7 +45,9 @@ class SqliteVecAdapter(DbAdapter):
 
     def make_engine(self) -> AsyncEngine:
         creator = make_async_creator(make_url(self._config.url))
-        return create_async_engine("sqlite+aiosqlite://", async_creator=creator)
+        engine = create_async_engine("sqlite+aiosqlite://", async_creator=creator)
+        attach_transaction_control(engine)
+        return engine
 
     def make_session_factory(
         self, engine: AsyncEngine

@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from octave.db._bootstrap import attach_transaction_control
 from octave.db.models import Base
 
 
@@ -40,11 +41,17 @@ def _make_async_creator(
 
 @pytest_asyncio.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
-    """Fresh SQLite file per test (tests stay independent per coding rules)."""
+    """Fresh SQLite file per test (tests stay independent per coding rules).
+
+    ``attach_transaction_control`` matches the production engine wiring
+    (``SqliteVecAdapter.make_engine``): explicit-BEGIN transaction control
+    so savepoints do not act as commits (see ``_bootstrap``).
+    """
     eng = create_async_engine(
         "sqlite+aiosqlite://",
         async_creator=_make_async_creator(str(tmp_path / "test.db")),
     )
+    attach_transaction_control(eng)
 
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

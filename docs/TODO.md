@@ -106,7 +106,7 @@
 
 - [x] 1. Design agent lifecycle model (definition active/paused gate; instance spawn → idle ⇄ active → destroy) — PR #105 (lifecycle vocabulary, `agent_instances` table, `AgentInstanceManager`; router/registry/scheduling remain #2–6)
 - [x] 2. Build agent registry (track running agents, their IDs, status, and assigned context) — PR #106 (read-only `AgentRegistry` over `agent_instances ⋈ agents`; no new table)
-- [ ] 3. Implement agent message routing (deliver messages to correct agent, broadcast when needed)
+- [x] 3. Implement agent message routing (deliver messages to correct agent, broadcast when needed) — PR #107 (session-level `MessageRouter` driver, `TurnDecider`/`TurnRunner` ports, `EventStore` transcript write path; LLM decider default, decision-model decider deferred to follow-up)
 - [ ] 4. Create agent result collection (capture agent outputs and make them queryable)
 - [ ] 5. Build inter-agent result sharing (allow agents to request and receive results from other agents)
 - [ ] 6. Add agent priority and scheduling (queue management, resource constraints)

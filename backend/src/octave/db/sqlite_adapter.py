@@ -14,16 +14,14 @@ from collections.abc import Sequence
 
 import sqlite_vec
 from sqlalchemy import text
-from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncConnection,
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
-    create_async_engine,
 )
 
-from octave.db._bootstrap import make_async_creator
+from octave.db._bootstrap import create_sqlite_engine
 from octave.db.adapter import DbAdapter
 from octave.db.errors import DbDimensionMismatchError, DbError
 from octave.db.registry import register_db
@@ -44,8 +42,7 @@ class SqliteVecAdapter(DbAdapter):
     """SQLite engine + vec0 vector index."""
 
     def make_engine(self) -> AsyncEngine:
-        creator = make_async_creator(make_url(self._config.url))
-        return create_async_engine("sqlite+aiosqlite://", async_creator=creator)
+        return create_sqlite_engine(self._config.url)
 
     def make_session_factory(
         self, engine: AsyncEngine

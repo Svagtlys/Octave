@@ -12,6 +12,7 @@ loading. Everything else here is engine-neutral SQLAlchemy + Alembic.
 from octave.db.adapter import DbAdapter
 from octave.db.config import DatabaseSettings, DbConfig
 from octave.db.errors import DbError
+from octave.db.event_store import EventStore
 from octave.db.lifespan import db_lifespan
 from octave.db.migrations import current, upgrade
 from octave.db.models import Base
@@ -30,6 +31,7 @@ __all__ = [
     "DbError",
     "DatabaseSettings",
     "EventKind",
+    "EventStore",
     "SqliteVecAdapter",
     "VaultHit",
     "VaultKind",

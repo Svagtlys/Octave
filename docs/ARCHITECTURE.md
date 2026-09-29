@@ -167,6 +167,25 @@ write path). Malformed `assignments` JSON degrades to empty with a warning (repo
 surface); bad status enums fail loud. Library-only: no routes. Design:
 [`.agents/specs/2026-09-27-agent-registry-design.md`](../.agents/specs/2026-09-27-agent-registry-design.md).
 
+**Implemented — agent message routing (issue #27):** `MessageRouter`
+(`octave.agent.router`) is the session-level turn-taking driver: `deliver()` appends
+the user message (author must be a current member — `NotAMemberError` otherwise), then
+loops — the injected `TurnDecider` names the next speaker from the idle-instance
+roster, `begin_turn` claims the #25 mutex, the injected `TurnRunner` port produces the
+reply, the reply is appended as `assistant_message`, the turn is released — until
+`AWAIT_USER`, the hop limit (`max_agent_turns`), or a runner failure (`ERROR`; failed
+turn lands idle + `system` event). Delivery is via the shared transcript: no per-agent
+queues; the runner reads the transcript as input. `LlmTurnDecider`
+(`octave.agent.decider`) is the default strategy — a 1:1 fast path with zero LLM calls,
+roster-validated JSON choice for multi-agent sessions; the driver retries a confused
+referee once, then hands control to the human. `EventStore` (`octave.db.event_store`)
+owns transcript appends: gap-free per-session `seq` with savepoint retry on collision
+(uq constraint is the backstop), per-kind payload validation. `TurnRunner` stays a
+port — the real runner (context assembly + `ToolLoop`) is Integration #1's composition.
+Library-only: no routes; one `deliver()` is one caller-owned transaction (never
+commits). Design:
+[`.agents/specs/2026-09-28-agent-message-routing-design.md`](../.agents/specs/2026-09-28-agent-message-routing-design.md).
+
 ---
 
 ## Data Layer
@@ -177,6 +196,11 @@ the inference adapter pattern:
 - **`DbAdapter` ABC + registry** — engine selection by name or import string;
   `sqlite` (SQLite + vec0) is the only adapter registered today, `pgvector`
   will self-register via the plugin path when it lands
+- **Explicit transaction control** (`octave.db._bootstrap.attach_transaction_control`)
+  — SQLite connections disable pysqlite's implicit-BEGIN mode and emit explicit
+  `BEGIN`; without it `RELEASE SAVEPOINT` acts as a commit, silently breaking the
+  "stores never commit; callers own the transaction boundary" convention that
+  `EventStore`'s seq-retry (and every store) depends on (issue #27)
 - **Alembic** for schema migrations, run programmatically via
   `octave.db.migrations.upgrade()` — auto-applied on app startup via
   `octave.db.lifespan.db_lifespan` unless `OCTAVE_DB_AUTO_MIGRATE=false`

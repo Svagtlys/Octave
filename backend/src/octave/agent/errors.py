@@ -8,10 +8,13 @@ __all__ = [
     "AgentError",
     "AgentNotFoundError",
     "AgentPausedError",
+    "DeciderChoiceError",
     "InstanceExistsError",
     "InstanceNotFoundError",
     "InvalidTransitionError",
     "ModelBindingError",
+    "NotAMemberError",
+    "RoutingError",
     "SessionNotFoundError",
     "TerminalSessionError",
     "ToolLoopLimitError",
@@ -57,6 +60,20 @@ class InvalidTransitionError(AgentError):
 
 class ModelBindingError(AgentError):
     """Binding missing, malformed, or (for tag form) unresolvable."""
+
+
+class RoutingError(AgentError):
+    """Base for router failures (design spec 2026-09-28)."""
+
+
+class NotAMemberError(RoutingError):
+    """Author is not a current member of the session (left_at set or
+    never invited)."""
+
+
+class DeciderChoiceError(RoutingError):
+    """Decider output malformed or outside the roster. Raised by deciders;
+    the driver owns retry + await-user fallback."""
 
 
 class ToolLoopLimitError(ToolError):

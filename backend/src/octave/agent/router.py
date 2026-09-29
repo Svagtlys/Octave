@@ -30,6 +30,7 @@ from octave.agent.registry import AgentRegistry, RunningAgent
 from octave.db.event_store import EventStore
 from octave.db.models import Event, Participant, SessionParticipant
 from octave.db.types import AgentStatus, EventKind, InstanceStatus
+from octave.inference.errors import AdapterError
 from octave.inference.types import Message
 
 __all__ = [
@@ -191,14 +192,16 @@ class MessageRouter:
         return None
 
     async def _decide_with_fallback(self, state: DecisionState) -> str:
-        """One retry on DeciderChoiceError, then AWAIT_USER: a confused
-        referee hands control to the human — never crashes the session."""
+        """One retry on invalid output (DeciderChoiceError) or adapter
+        failure (AdapterError), then AWAIT_USER: a confused or unreachable
+        referee hands control to the human — the user message is already
+        appended and must survive, never crash the session."""
         for attempt in (0, 1):
             try:
                 return await self._decider.decide(state)
-            except DeciderChoiceError as exc:
+            except (DeciderChoiceError, AdapterError) as exc:
                 logger.warning(
-                    "decider choice invalid | attempt=%s error=%s", attempt, exc
+                    "decider failed | attempt=%s error=%s", attempt, exc
                 )
         return Decision.AWAIT_USER
 

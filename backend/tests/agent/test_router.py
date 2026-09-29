@@ -16,6 +16,7 @@ from octave.agent.router import MessageRouter, StopReason
 from octave.db.event_store import EventStore
 from octave.db.models import Agent, Participant, Session, SessionParticipant, User
 from octave.db.types import InstanceStatus
+from octave.inference.errors import AdapterConnectionError
 from octave.inference.types import Message
 
 _TAG_BINDING = {"kind": "tag", "tag": "quick"}
@@ -255,6 +256,29 @@ async def test_decider_invalid_falls_back_to_await_user(
     assert outcome.stop_reason == StopReason.AWAIT_USER
     assert outcome.turns == []
     assert runner.calls == []
+
+
+async def test_decider_adapter_failure_degrades_to_await_user(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Spec: an AdapterError from the decider hits the driver's
+    decider-failure path (retry once, then await user) — NOT a rollback that
+    loses the user message. Two queued errors also pin the retry count: a
+    third consultation would IndexError."""
+    await _seed(session_factory)
+    await _spawn(session_factory, "a_1")
+    await _invite_user(session_factory)
+    decider = ScriptedDecider(
+        [AdapterConnectionError("engine down"), AdapterConnectionError("still down")]
+    )
+    runner = RecordingRunner([])
+    outcome = await _deliver(session_factory, decider=decider, runner=runner)
+    assert outcome.stop_reason == StopReason.AWAIT_USER
+    assert outcome.turns == []
+    # User message survives: deliver() returned normally, caller committed
+    assert await _transcript(session_factory) == [
+        (1, "user_message", "p_u1", "Hello")
+    ]
 
 
 async def test_non_member_author_rejected(

@@ -11,47 +11,25 @@ aiosqlite's thread, where PRAGMAs apply correctly — a cursor handed back
 by the async adapter object would silently never execute.
 """
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from pathlib import Path
 
-import aiosqlite
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import (
-    AsyncEngine,
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from octave.db._bootstrap import attach_transaction_control
+from octave.db._bootstrap import create_sqlite_engine
 from octave.db.models import Base
-
-
-def _make_async_creator(
-    db_path: str,
-) -> Callable[[], Awaitable[aiosqlite.Connection]]:
-    async def _connect() -> aiosqlite.Connection:
-        conn = await aiosqlite.connect(db_path)
-        await conn.execute("PRAGMA foreign_keys=ON")
-        await conn.execute("PRAGMA busy_timeout=5000")
-        return conn
-
-    return _connect
 
 
 @pytest_asyncio.fixture
 async def engine(tmp_path: Path) -> AsyncIterator[AsyncEngine]:
     """Fresh SQLite file per test (tests stay independent per coding rules).
 
-    ``attach_transaction_control`` matches the production engine wiring
-    (``SqliteVecAdapter.make_engine``): explicit-BEGIN transaction control
-    so savepoints do not act as commits (see ``_bootstrap``).
+    Built through ``create_sqlite_engine``, the same choke point production
+    uses (``SqliteVecAdapter.make_engine``): PRAGMAs + explicit-BEGIN
+    transaction control so savepoints do not act as commits.
     """
-    eng = create_async_engine(
-        "sqlite+aiosqlite://",
-        async_creator=_make_async_creator(str(tmp_path / "test.db")),
-    )
-    attach_transaction_control(eng)
+    eng = create_sqlite_engine(f"sqlite:///{tmp_path / 'test.db'}")
 
     async with eng.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

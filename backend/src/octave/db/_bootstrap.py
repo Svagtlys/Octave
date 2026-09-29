@@ -17,11 +17,11 @@ from typing import Any
 
 import aiosqlite
 import sqlite_vec
-from sqlalchemy import event
+from sqlalchemy import event, make_url
 from sqlalchemy.engine import URL
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-__all__ = ["attach_transaction_control", "make_async_creator"]
+__all__ = ["attach_transaction_control", "create_sqlite_engine", "make_async_creator"]
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +45,24 @@ def make_async_creator(url: URL) -> Callable[[], Awaitable[Any]]:
         return conn
 
     return _connect
+
+
+def create_sqlite_engine(url: URL | str) -> AsyncEngine:
+    """The single choke point for SQLite engine creation (issue #27).
+
+    Bundles the async creator (vec0 + PRAGMAs) with explicit transaction
+    control. Engines built any other way silently reintroduce the
+    RELEASE-SAVEPOINT-commits bug, so prefer this over calling
+    ``create_async_engine`` directly. ``url`` is the logical SQLite URL
+    (``sqlite:///path``); the driver scheme is always aiosqlite.
+    """
+    if isinstance(url, str):
+        url = make_url(url)
+    engine = create_async_engine(
+        "sqlite+aiosqlite://", async_creator=make_async_creator(url)
+    )
+    attach_transaction_control(engine)
+    return engine
 
 
 def attach_transaction_control(engine: AsyncEngine) -> None:

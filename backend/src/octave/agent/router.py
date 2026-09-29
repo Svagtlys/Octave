@@ -54,10 +54,10 @@ class StopReason(StrEnum):
 
 @dataclass(frozen=True)
 class TurnRecord:
-    """One completed agent turn. Events contributed by this turn
-    (``assistant_message`` now; tool events when Integration #1's real
-    runner appends them inside the bracket). CM #5's archival key per #25:
-    (session_id, agent_id, seq_range) — never instance_id."""
+    """One completed agent turn. The seq range is the whole claimed bracket:
+    events the runner appends during the turn (tool calls/results once
+    Integration #1 lands) through the reply event. CM #5's archival key per
+    #25: (session_id, agent_id, seq_range) — never instance_id."""
 
     session_id: str
     agent_id: str
@@ -121,14 +121,21 @@ class MessageRouter:
         )
         turns: list[TurnRecord] = []
         agent_turns = 0
+        messages: list[Message] = []
+        cursor = 0
         while True:
             roster = await self._roster(session_id)
             if not roster:
                 return RouteOutcome(turns=turns, stop_reason=StopReason.AWAIT_USER)
             if agent_turns >= self._max_agent_turns:
                 return RouteOutcome(turns=turns, stop_reason=StopReason.HOP_LIMIT)
-            events = await self._events.read(session_id)
-            messages = _transcript_messages(events)
+            # Incremental transcript read: only events past the cursor (the
+            # runner's in-turn appends included). The whole exchange is one
+            # transaction on one connection, so the cursor never misses a row.
+            new_events = await self._events.read(session_id, after_seq=cursor)
+            if new_events:
+                cursor = new_events[-1].seq
+                messages.extend(_transcript_messages(new_events))
             state = DecisionState(
                 roster=roster, messages=messages[-self._decider_tail :]
             )
@@ -136,8 +143,10 @@ class MessageRouter:
             if choice == Decision.AWAIT_USER:
                 return RouteOutcome(turns=turns, stop_reason=StopReason.AWAIT_USER)
             candidate = next(c for c in roster if c.participant_id == choice)
+            # The bracket opens at claim: the driver is the only writer in
+            # this transaction, so the next seq after the cursor is ours.
             outcome = await self._run_agent_turn(
-                session_id, candidate, messages, turns
+                session_id, candidate, messages, turns, bracket_start=cursor + 1
             )
             if outcome is not None:
                 return outcome
@@ -149,6 +158,8 @@ class MessageRouter:
         candidate: Candidate,
         messages: list[Message],
         turns: list[TurnRecord],
+        *,
+        bracket_start: int,
     ) -> RouteOutcome | None:
         """Claim, run, record, release. None = turn completed normally;
         a RouteOutcome = the loop must stop (runner failure)."""
@@ -185,7 +196,7 @@ class MessageRouter:
                 session_id=session_id,
                 agent_id=running.agent_id,
                 instance_id=candidate.instance_id,
-                seq_start=reply.seq,
+                seq_start=bracket_start,
                 seq_end=reply.seq,
             )
         )

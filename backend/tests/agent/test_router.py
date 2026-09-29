@@ -15,7 +15,7 @@ from octave.agent.errors import DeciderChoiceError, NotAMemberError
 from octave.agent.router import MessageRouter, StopReason
 from octave.db.event_store import EventStore
 from octave.db.models import Agent, Participant, Session, SessionParticipant, User
-from octave.db.types import InstanceStatus
+from octave.db.types import EventKind, InstanceStatus
 from octave.inference.errors import AdapterConnectionError
 from octave.inference.types import Message
 
@@ -278,6 +278,66 @@ async def test_decider_adapter_failure_degrades_to_await_user(
     # User message survives: deliver() returned normally, caller committed
     assert await _transcript(session_factory) == [
         (1, "user_message", "p_u1", "Hello")
+    ]
+
+
+class _ToolAppendingRunner(RecordingRunner):
+    """Appends tool events inside the claimed bracket, like the real runner
+    (Integration #1: context assembly + ToolLoop) will."""
+
+    def __init__(self, session: AsyncSession, replies: list[str]) -> None:
+        super().__init__(replies)
+        self._events = EventStore(session)
+
+    async def run_turn(self, *, instance, messages: list[Message]) -> str:  # type: ignore[no-untyped-def]
+        await self._events.append(
+            "s_1", EventKind.TOOL_CALL, payload={"tool": "search", "args": {}}
+        )
+        await self._events.append(
+            "s_1", EventKind.TOOL_RESULT, payload={"result": "4 hits"}
+        )
+        return await super().run_turn(instance=instance, messages=messages)
+
+
+async def test_turn_record_covers_full_bracket(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """TurnRecord's seq range is the whole claimed bracket — events the
+    runner appends during the turn included — not just the reply event.
+    CM #5's archival keys on this range."""
+    await _seed(session_factory)
+    await _spawn(session_factory, "a_1")
+    p_ai1 = await _participant_of(session_factory, "a_1")
+    await _invite_user(session_factory)
+    async with session_factory() as session:
+        runner = _ToolAppendingRunner(session, ["here are 4 hits", "second"])
+        router = _router(
+            session,
+            decider=ScriptedDecider([p_ai1, p_ai1, Decision.AWAIT_USER]),
+            runner=runner,
+        )
+        outcome = await router.deliver(
+            "s_1", author_participant_id="p_u1", content="Hello"
+        )
+        await session.commit()
+    first, second = outcome.turns
+    assert (first.seq_start, first.seq_end) == (2, 4)
+    assert (second.seq_start, second.seq_end) == (5, 7)
+    kinds = [(seq, kind) for seq, kind, _, _ in await _transcript(session_factory)]
+    assert kinds == [
+        (1, "user_message"),
+        (2, "tool_call"),
+        (3, "tool_result"),
+        (4, "assistant_message"),
+        (5, "tool_call"),
+        (6, "tool_result"),
+        (7, "assistant_message"),
+    ]
+    # Turn 2's input picks up turn 1's bracket via the cursor: tool events
+    # skipped, reply included.
+    assert runner.calls[1][1] == [
+        Message(role="user", content="Hello"),
+        Message(role="assistant", content="here are 4 hits"),
     ]
 
 

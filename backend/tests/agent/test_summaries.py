@@ -311,3 +311,92 @@ async def test_peek_treats_malformed_meta_as_missing(
     async with factory() as session:
         summarizer = _summarizer(session, adapter, ScriptedAdapter([]))
         assert await summarizer.peek("s_1") is None
+
+
+async def test_collect_returns_cached_when_fresh(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    adapter, factory = env
+    await _seed_transcript(factory)
+    scripted = ScriptedAdapter([_completion("Title: Greeting\nfirst.")])
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, scripted)
+        await summarizer.collect("s_1")
+        await session.commit()
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, scripted)  # queue empty
+        summary = await summarizer.collect("s_1")
+    assert summary is not None
+    assert summary.content == "first."
+    assert len(scripted.complete_calls) == 1  # no second call
+
+
+async def test_collect_regenerates_when_transcript_grew(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    adapter, factory = env
+    await _seed_transcript(factory)
+    scripted = ScriptedAdapter(
+        [_completion("Title: Greeting\nfirst."), _completion("Title: Later\nsecond.")]
+    )
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, scripted)
+        await summarizer.collect("s_1")
+        await session.commit()
+    async with factory() as session:
+        await EventStore(session).append(
+            "s_1",
+            EventKind.USER_MESSAGE,
+            author_participant_id="p_u1",
+            payload={"content": "and then?"},
+        )
+        await session.commit()
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, scripted)
+        summary = await summarizer.collect("s_1")
+        await session.commit()
+    assert summary is not None
+    assert summary.content == "second."
+    assert summary.covered_seq == 3
+    assert len(scripted.complete_calls) == 2
+    async with factory() as session:
+        fresh = _summarizer(session, adapter, ScriptedAdapter([]))
+        peeked = await fresh.peek("s_1")
+    assert peeked is not None
+    assert peeked.content == "second."  # same deterministic item id
+
+
+async def test_collect_force_regenerates_even_when_fresh(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    adapter, factory = env
+    await _seed_transcript(factory)
+    scripted = ScriptedAdapter(
+        [
+            _completion("Title: Greeting\nfirst."),
+            _completion("Title: Greeting\nrewritten."),
+        ]
+    )
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, scripted)
+        await summarizer.collect("s_1")
+        second = await summarizer.collect("s_1", force=True)
+        await session.commit()
+    assert second is not None
+    assert second.content == "rewritten."
+    assert len(scripted.complete_calls) == 2
+
+
+async def test_collect_never_commits(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    adapter, factory = env
+    await _seed_transcript(factory)
+    scripted = ScriptedAdapter([_completion("Title: Greeting\nbody.")])
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, scripted)
+        await summarizer.collect("s_1")
+        await session.rollback()
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, ScriptedAdapter([]))
+        assert await summarizer.peek("s_1") is None

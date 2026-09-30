@@ -197,7 +197,13 @@ class SessionSummarizer:
         if not events:
             return None
         seq_max = events[-1].seq
-        # Task 5 inserts the cache check here.
+        if not force:
+            item = await self._vault.get(_item_id(session_id))
+            if item is not None:
+                cached = _to_summary(item, session_id)
+                if cached is not None and cached.covered_seq == seq_max:
+                    logger.debug("session summary cache hit | session=%s", session_id)
+                    return cached
         return await self._generate(session_row, events, seq_max)
 
     async def _generate(

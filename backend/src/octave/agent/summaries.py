@@ -10,13 +10,27 @@ inside ``MessageRouter.deliver()``.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
-from octave.db.models import Event
-from octave.db.types import EventKind
+from sqlalchemy.ext.asyncio import AsyncSession
 
-__all__ = ["HeadTailDigest", "SummaryContext", "TranscriptDigest"]
+from octave.db.adapter import DbAdapter
+from octave.db.event_store import EventStore
+from octave.db.models import Event, VaultItem
+from octave.db.types import EventKind, ModelBinding
+from octave.db.vault_store import VaultStore
+from octave.inference.adapter import InferenceAdapter
+
+__all__ = [
+    "HeadTailDigest",
+    "SessionSummarizer",
+    "SessionSummary",
+    "SummaryContext",
+    "TranscriptDigest",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -97,3 +111,72 @@ class HeadTailDigest:
                 _render_line(e, ctx.labels, self._tool_line_chars) for e in tail
             )
         return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class SessionSummary:
+    """One session's derived headline. ``covered_seq`` is the transcript
+    seq at generation time — freshness is computed, never stored."""
+
+    session_id: str
+    owner_user_id: str
+    title: str
+    content: str
+    covered_seq: int
+    model_name: str | None
+    generated_at: datetime
+
+
+def _item_id(session_id: str) -> str:
+    """Deterministic vault id: regeneration is an idempotent replacement."""
+    return f"session_summary:{session_id}"
+
+
+def _to_summary(item: VaultItem, session_id: str) -> SessionSummary | None:
+    """Lenient by design (reporting surface): malformed cached meta is
+    treated as missing, mirroring the registry's _parse_assignments rule."""
+    meta = item.meta if isinstance(item.meta, dict) else {}
+    covered = meta.get("covered_seq")
+    if not isinstance(covered, int):
+        return None
+    model_name = meta.get("model_name")
+    return SessionSummary(
+        session_id=session_id,
+        owner_user_id=item.user_id,
+        title=item.name,
+        content=item.content,
+        covered_seq=covered,
+        model_name=model_name if isinstance(model_name, str) else None,
+        generated_at=item.updated_at,
+    )
+
+
+class SessionSummarizer:
+    """Generate + cache one LLM summary per session. Never commits; callers
+    own transaction boundaries (``octave.db.deps``)."""
+
+    def __init__(
+        self,
+        *,
+        session: AsyncSession,
+        db_adapter: DbAdapter,
+        binding: ModelBinding,
+        adapter_for: Callable[[str | None], InferenceAdapter],
+        tag_lookup: Callable[[str], str | None] | None = None,
+        digest: TranscriptDigest | None = None,
+    ) -> None:
+        self._session = session
+        self._binding = binding
+        self._adapter_for = adapter_for
+        self._tag_lookup = tag_lookup
+        self._digest = digest if digest is not None else HeadTailDigest()
+        self._events = EventStore(session)
+        self._vault = VaultStore(db_adapter, session)
+
+    async def peek(self, session_id: str) -> SessionSummary | None:
+        """Cached summary only; never calls the adapter. The cheap path for
+        list views."""
+        item = await self._vault.get(_item_id(session_id))
+        if item is None:
+            return None
+        return _to_summary(item, session_id)

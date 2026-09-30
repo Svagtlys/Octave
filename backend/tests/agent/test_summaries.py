@@ -6,8 +6,19 @@ remove_vector, so the vec0 table must exist. The import header grows per
 task; ruff's F401 gate runs at every commit, so import nothing early.
 """
 
-from octave.db.models import Event
-from octave.db.types import EventKind
+from collections.abc import AsyncIterator
+from pathlib import Path
+
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+
+from octave.agent.summaries import SessionSummarizer
+from octave.db.config import DbConfig
+from octave.db.event_store import EventStore
+from octave.db.models import Agent, Base, Event, Participant, Session, User, VaultItem
+from octave.db.sqlite_adapter import SqliteVecAdapter
+from octave.db.types import EventKind, ExplicitModelBinding, VaultKind
+from octave.inference.types import CompletionResult
 
 DIM = 4
 
@@ -83,3 +94,153 @@ async def test_digest_tool_events_are_compact_one_liners() -> None:
     assert lines[0].startswith("Tool call: calendar.list")
     assert lines[1].startswith("Tool result: xxx")
     assert len(lines[1]) <= 50
+
+
+_TAG_BINDING = {"kind": "tag", "tag": "quick"}
+
+
+@pytest_asyncio.fixture
+async def env(
+    tmp_path: Path,
+) -> AsyncIterator[tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]]:
+    """Vec-enabled DB with seeded user/agent/session/participants. Mirrors
+    tests/db/test_vault_store.py's env: VaultStore.upsert(embedding=None)
+    calls remove_vector, so the vec0 table must exist."""
+    config = DbConfig(
+        adapter="sqlite",
+        url=f"sqlite+aiosqlite:///{tmp_path / 'summaries.db'}",
+        embedding_dim=DIM,
+    )
+    adapter = SqliteVecAdapter(config)
+    engine: AsyncEngine = adapter.make_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await adapter.ensure_vector_store(conn)
+    factory = adapter.make_session_factory(engine)
+    async with factory() as session:
+        session.add(User(id="u_1", display_name="Alice"))
+        session.add(Agent(id="a_1", name="Echo", model_binding=_TAG_BINDING))
+        session.add(Session(id="s_1", created_by_user_id="u_1", status="active"))
+        session.add(Participant(id="p_u1", user_id="u_1", label="Alice"))
+        session.add(Participant(id="p_a1", agent_id="a_1", label="Echo"))
+        await session.commit()
+    yield adapter, factory
+    await engine.dispose()
+
+
+def _explicit_binding() -> ExplicitModelBinding:
+    return ExplicitModelBinding(kind="explicit", adapter="fake", model="summarizer-1")
+
+
+class ScriptedAdapter:
+    """Minimal in-test adapter: serves queued results, records requests.
+    (tests/agent/fakes.py's ScriptedAdapter needs AdapterConfig; this one is
+    duck-typed for complete() only.)"""
+
+    def __init__(self, results: list[CompletionResult | Exception]) -> None:
+        self._results = list(results)
+        self.complete_calls = []
+
+    async def complete(self, request):  # noqa: ANN001 — duck-typed seam
+        self.complete_calls.append(request)
+        if not self._results:
+            raise AssertionError("ScriptedAdapter queue exhausted")
+        item = self._results.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def _summarizer(
+    session: AsyncSession,
+    db_adapter: SqliteVecAdapter,
+    scripted: ScriptedAdapter,
+    **overrides,  # noqa: ANN001
+) -> SessionSummarizer:
+    return SessionSummarizer(
+        session=session,
+        db_adapter=db_adapter,
+        binding=_explicit_binding(),
+        adapter_for=lambda name: scripted,
+        **overrides,
+    )
+
+
+async def _seed_transcript(factory: async_sessionmaker[AsyncSession]) -> None:
+    async with factory() as session:
+        store = EventStore(session)
+        await store.append(
+            "s_1",
+            EventKind.USER_MESSAGE,
+            author_participant_id="p_u1",
+            payload={"content": "hello"},
+        )
+        await store.append(
+            "s_1",
+            EventKind.ASSISTANT_MESSAGE,
+            author_participant_id="p_a1",
+            payload={"content": "hi there"},
+        )
+        await session.commit()
+
+
+def _completion(text: str) -> CompletionResult:
+    return CompletionResult(text=text, model="summarizer-1", finish_reason="stop")
+
+
+async def test_peek_returns_none_when_absent(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    adapter, factory = env
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, ScriptedAdapter([]))
+        assert await summarizer.peek("s_1") is None
+
+
+async def test_peek_reads_item_written_by_vault_store(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    from octave.db.vault_store import VaultStore
+
+    adapter, factory = env
+    async with factory() as session:
+        await VaultStore(adapter, session).upsert(
+            item_id="session_summary:s_1",
+            user_id="u_1",
+            kind=VaultKind.SESSION_SUMMARY,
+            name="Greeting",
+            content="Alice greeted; Echo replied.",
+            meta={"session_id": "s_1", "covered_seq": 2, "model_name": "summarizer-1"},
+        )
+        await session.commit()
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, ScriptedAdapter([]))
+        summary = await summarizer.peek("s_1")
+    assert summary is not None
+    assert summary.title == "Greeting"
+    assert summary.content == "Alice greeted; Echo replied."
+    assert summary.covered_seq == 2
+    assert summary.owner_user_id == "u_1"
+    assert summary.model_name == "summarizer-1"
+    assert summary.session_id == "s_1"
+
+
+async def test_peek_treats_malformed_meta_as_missing(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    adapter, factory = env
+    async with factory() as session:
+        session.add(
+            VaultItem(
+                id="session_summary:s_1",
+                user_id="u_1",
+                kind="session_summary",
+                name="x",
+                content="y",
+                meta={"nope": True},
+            )
+        )
+        await session.commit()
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, ScriptedAdapter([]))
+        assert await summarizer.peek("s_1") is None

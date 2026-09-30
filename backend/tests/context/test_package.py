@@ -36,6 +36,13 @@ def test_no_agent_plane_imports() -> None:
     assert not _imported_top_level_octave_modules() & BANNED_OCTAVE_MODULES
 
 
-def test_error_names_are_exported() -> None:
-    for name in ("SessionNotFound", "ModelBindingNotResolved"):
+def test_public_names_are_exported() -> None:
+    for name in (
+        "ArchiveReport",
+        "ContextArchiver",
+        "ModelBindingNotResolved",
+        "SessionNotFound",
+        "TurnBracket",
+        "reconstruct_turns",
+    ):
         assert hasattr(context_pkg, name), name

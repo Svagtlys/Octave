@@ -22,7 +22,11 @@ BRACKET = TurnBracket("a_1", 2, 4)
 
 def _bracket_events() -> list[Event]:
     return [
-        _event(2, EventKind.TOOL_CALL, {"tool_name": "web.search", "arguments": '{"q": "x"}'}),
+        _event(
+            2,
+            EventKind.TOOL_CALL,
+            {"tool_name": "web.search", "arguments": '{"q": "x"}'},
+        ),
         _event(3, EventKind.TOOL_RESULT, {"content": "Sunny 21C"}),
         _event(4, EventKind.ASSISTANT_MESSAGE, {"content": "It is sunny."}),
     ]

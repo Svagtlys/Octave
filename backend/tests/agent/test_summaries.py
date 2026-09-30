@@ -18,7 +18,7 @@ from octave.db.config import DbConfig
 from octave.db.event_store import EventStore
 from octave.db.models import Agent, Base, Event, Participant, Session, User, VaultItem
 from octave.db.sqlite_adapter import SqliteVecAdapter
-from octave.db.types import EventKind, ExplicitModelBinding, VaultKind
+from octave.db.types import EventKind, ExplicitModelBinding, TagModelBinding, VaultKind
 from octave.inference.types import CompletionResult
 
 DIM = 4
@@ -400,3 +400,128 @@ async def test_collect_never_commits(
     async with factory() as session:
         summarizer = _summarizer(session, adapter, ScriptedAdapter([]))
         assert await summarizer.peek("s_1") is None
+
+
+async def test_adapter_error_propagates_without_partial_write(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    from octave.inference.errors import AdapterConnectionError
+
+    adapter, factory = env
+    await _seed_transcript(factory)
+    scripted = ScriptedAdapter([AdapterConnectionError("engine down")])
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, scripted)
+        with pytest.raises(AdapterConnectionError):
+            await summarizer.collect("s_1")
+        await session.rollback()
+    async with factory() as session:
+        peeked = await _summarizer(session, adapter, ScriptedAdapter([])).peek("s_1")
+    assert peeked is None
+
+
+async def test_empty_completion_raises_summary_error(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    from octave.agent.errors import SummaryError
+
+    adapter, factory = env
+    await _seed_transcript(factory)
+    scripted = ScriptedAdapter([_completion("   \n  ")])
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, scripted)
+        with pytest.raises(SummaryError):
+            await summarizer.collect("s_1")
+        await session.rollback()
+    async with factory() as session:
+        peeked = await _summarizer(session, adapter, ScriptedAdapter([])).peek("s_1")
+    assert peeked is None
+
+
+async def test_explicit_binding_passes_adapter_name_to_adapter_for(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    adapter, factory = env
+    await _seed_transcript(factory)
+    seen: list[str | None] = []
+    scripted = ScriptedAdapter([_completion("Title: T\nbody.")])
+
+    def adapter_for(name: str | None) -> ScriptedAdapter:
+        seen.append(name)
+        return scripted
+
+    async with factory() as session:
+        summarizer = SessionSummarizer(
+            session=session,
+            db_adapter=adapter,
+            binding=_explicit_binding(),
+            adapter_for=adapter_for,
+        )
+        await summarizer.collect("s_1")
+    assert seen == ["fake"]  # ExplicitModelBinding(adapter="fake")
+
+
+async def test_tag_binding_without_lookup_fails_loud(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    from octave.agent.errors import ModelBindingError
+
+    adapter, factory = env
+    await _seed_transcript(factory)
+    async with factory() as session:
+        summarizer = SessionSummarizer(
+            session=session,
+            db_adapter=adapter,
+            binding=TagModelBinding(kind="tag", tag="quick"),
+            adapter_for=lambda name: ScriptedAdapter([]),
+        )
+        with pytest.raises(ModelBindingError):
+            await summarizer.collect("s_1")
+
+
+async def test_title_falls_back_to_session_title(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    adapter, factory = env
+    await _seed_transcript(factory)
+    async with factory() as session:
+        session_row = await session.get(Session, "s_1")
+        session_row.title = "Weekly review"
+        await session.commit()
+    scripted = ScriptedAdapter([_completion("no title line here\nBody prose.")])
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, scripted)
+        summary = await summarizer.collect("s_1")
+    assert summary is not None
+    assert summary.title == "Weekly review"
+    assert summary.content == "no title line here\nBody prose."
+
+
+async def test_title_falls_back_to_first_user_message(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    adapter, factory = env
+    await _seed_transcript(factory)
+    scripted = ScriptedAdapter([_completion("Body only, no title contract.")])
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, scripted)
+        summary = await summarizer.collect("s_1")
+    assert summary is not None
+    assert summary.title == "hello"  # first user message content
+
+
+async def test_title_falls_back_to_session_id_when_no_user_message(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    adapter, factory = env
+    async with factory() as session:
+        await EventStore(session).append(
+            "s_1", EventKind.SYSTEM, payload={"content": "system only"}
+        )
+        await session.commit()
+    scripted = ScriptedAdapter([_completion("Body.")])
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, scripted)
+        summary = await summarizer.collect("s_1")
+    assert summary is not None
+    assert summary.title == "Session s_1"  # f"Session {id[:8]}" — "s_1" is 3 chars

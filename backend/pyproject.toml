@@ -60,6 +60,10 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # Autogenerate output is regenerated, not hand-edited; its formatting is
 # Alembic's, not ours.
 "src/octave/db/migrations/versions/*" = ["E501", "I001", "W291", "E402"]
+# Design spec Decision 9 names these CM-local errors deliberately: they
+# mirror the agent plane's vocabulary with independent types, so N818's
+# Error-suffix would break the mirror the spec pins.
+"src/octave/context/errors.py" = ["N818"]
 
 [tool.mypy]
 strict = true

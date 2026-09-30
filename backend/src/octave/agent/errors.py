@@ -16,6 +16,7 @@ __all__ = [
     "NotAMemberError",
     "RoutingError",
     "SessionNotFoundError",
+    "SummaryError",
     "TerminalSessionError",
     "ToolLoopLimitError",
     "TurnInProgressError",
@@ -74,6 +75,11 @@ class NotAMemberError(RoutingError):
 class DeciderChoiceError(RoutingError):
     """Decider output malformed or outside the roster. Raised by deciders;
     the driver owns retry + await-user fallback."""
+
+
+class SummaryError(AgentError):
+    """Summary generation produced empty/whitespace content (design spec
+    2026-09-29). Never persist empty summaries."""
 
 
 class ToolLoopLimitError(ToolError):

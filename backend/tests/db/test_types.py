@@ -55,8 +55,8 @@ def test_vault_kind_wire_values() -> None:
     assert VaultKind.SKILL == "skill"
     assert VaultKind.PROMPT == "prompt"
     assert VaultKind.PREFERENCE == "preference"
-    assert VaultKind.RUN_SUMMARY == "run_summary"
-    assert VaultKind.RUN_RECORD == "run_record"
+    assert VaultKind.SESSION_SUMMARY == "session_summary"
+    assert VaultKind.TRANSCRIPT_CHUNK == "transcript_chunk"
 
 
 def test_vault_kind_rejects_unknown_value() -> None:
@@ -66,7 +66,7 @@ def test_vault_kind_rejects_unknown_value() -> None:
 
 def test_vault_kind_revalidates_stored_text() -> None:
     """``vault_items.kind`` is TEXT in the DB; the enum is the app-level guard."""
-    assert VaultKind(VaultKind.RUN_RECORD.value) is VaultKind.RUN_RECORD
+    assert VaultKind(VaultKind.TRANSCRIPT_CHUNK.value) is VaultKind.TRANSCRIPT_CHUNK
 
 
 def test_vault_kind_membership_is_exhaustive() -> None:
@@ -74,8 +74,8 @@ def test_vault_kind_membership_is_exhaustive() -> None:
         "skill",
         "prompt",
         "preference",
-        "run_summary",
-        "run_record",
+        "session_summary",
+        "transcript_chunk",
     }
 
 

@@ -53,8 +53,8 @@ class VaultKind(StrEnum):
     SKILL = "skill"
     PROMPT = "prompt"
     PREFERENCE = "preference"
-    RUN_SUMMARY = "run_summary"
-    RUN_RECORD = "run_record"
+    SESSION_SUMMARY = "session_summary"
+    TRANSCRIPT_CHUNK = "transcript_chunk"
 
 
 class AgentStatus(StrEnum):

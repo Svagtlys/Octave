@@ -4,8 +4,7 @@
 Composition layer — the only package importing both octave.mcp and
 octave.inference, plus octave.db for the instance manager. Manager
 components ship here as additional modules: instance lifecycle
-(#25), registry (#26), message routing (#27). Result collection (#4) and
-scheduling (#6) remain.
+(#25), registry (#26), message routing (#27). Scheduling (#6) remains.
 """
 
 from octave.agent.decider import (
@@ -27,6 +26,7 @@ from octave.agent.errors import (
     NotAMemberError,
     RoutingError,
     SessionNotFoundError,
+    SummaryError,
     TerminalSessionError,
     ToolLoopLimitError,
     TurnInProgressError,
@@ -43,6 +43,13 @@ from octave.agent.router import (
     TurnRecord,
     TurnRunner,
 )
+from octave.agent.summaries import (
+    HeadTailDigest,
+    SessionSummarizer,
+    SessionSummary,
+    SummaryContext,
+    TranscriptDigest,
+)
 from octave.agent.types import ToolOutcome, ToolTurn
 from octave.tools.errors import ToolError
 
@@ -56,6 +63,7 @@ __all__ = [
     "DeciderChoiceError",
     "Decision",
     "DecisionState",
+    "HeadTailDigest",
     "InstanceExistsError",
     "InstanceNotFoundError",
     "InvalidTransitionError",
@@ -69,7 +77,11 @@ __all__ = [
     "RoutingError",
     "RunningAgent",
     "SessionNotFoundError",
+    "SessionSummarizer",
+    "SessionSummary",
     "StopReason",
+    "SummaryContext",
+    "SummaryError",
     "TerminalSessionError",
     "ToolError",
     "ToolExecutor",
@@ -77,6 +89,7 @@ __all__ = [
     "ToolLoopLimitError",
     "ToolOutcome",
     "ToolTurn",
+    "TranscriptDigest",
     "TurnDecider",
     "TurnInProgressError",
     "TurnRecord",

@@ -230,19 +230,19 @@ async def test_search_scoped_by_kind_and_session_id(
     async with factory() as session:
         store = VaultStore(adapter, session)
         await store.upsert(
-            item_id="r_1", user_id="u_1", kind=VaultKind.RUN_RECORD,
+            item_id="r_1", user_id="u_1", kind=VaultKind.TRANSCRIPT_CHUNK,
             name="chunk", content="verbatim",
             meta={"session_id": "sess_A"}, embedding=_unit(0),
         )
         await store.upsert(
-            item_id="r_2", user_id="u_1", kind=VaultKind.RUN_RECORD,
+            item_id="r_2", user_id="u_1", kind=VaultKind.TRANSCRIPT_CHUNK,
             name="chunk", content="other run",
             meta={"session_id": "sess_B"}, embedding=_unit(0),
         )
         await session.commit()
         hits = await store.search(
             user_id="u_1", embedding=_unit(0),
-            kind=VaultKind.RUN_RECORD, session_id="sess_A",
+            kind=VaultKind.TRANSCRIPT_CHUNK, session_id="sess_A",
         )
         assert [hit.item.id for hit in hits] == ["r_1"]
 

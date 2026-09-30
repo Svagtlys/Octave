@@ -130,6 +130,11 @@ Each decision follows this structure:
 
 **Consequences:** The vault is canonical for injectable context (amends the 2026-06-27 decision above). Per-kind Pydantic validation models, chunking policy, archival triggers/dedup, and scoped vector search in `DbAdapter.search_similar` are explicitly deferred to the Context Manager storage/lifecycle work items — this decision records the requirements they must serve. Extra `metadata` keys are allowed, so future consumers extend conventions without coordination; the storage layer validates with `extra="allow"`.
 
+**Amendment (2026-09-29):** Kinds renamed before any row was written —
+`run_summary` → `session_summary`, `run_record` → `transcript_chunk`; the
+summary is session-scoped (whole session, all agents), the record is the
+`events` table itself. See the 2026-09-29 ADR.
+
 ### 2026-09-21 — Vector Mirror Behind the Adapter Seam; Aux-Column Filters; Caller-Supplied Embeddings
 
 **Context:** Issue #32 ships the vault storage layer. vec0 is a virtual table that owns its data — unlike pgvector there is no index-on-a-column, so ANN search requires a second store (`vec_vault_items_<N>`) written through the `sqlite_vec` serializer, which is quarantined to `sqlite_adapter.py`. The 2026-09-20 data model requires Tier-2 search scoped by kind/session_id; vec0 applies filters pre-`k` only via auxiliary columns, and vec0 cannot `ALTER ADD COLUMN` — a one-way door that must be opened while the table is still disposable.
@@ -141,3 +146,39 @@ Each decision follows this structure:
 **Rationale:** The mirror is a SQLite-ism (pgvector's column *is* the index host), so the adapter methods default to no-ops and the conformance suite pins only the observable contract: store→findable, remove→gone, filters visible. The DDL change is free now and a full re-embed later; doing it later would strand filtered search in #11 behind a data migration.
 
 **Consequences:** Writes must go through `VaultStore`, never raw ORM mutations of `vault_items` (bypasses desync the index). `upsert` is full replacement, not patch — read-modify-write to preserve an embedding. Dim-change repair = `upsert` with fresh vectors; no auto-re-embed ships (detection columns + idempotent upsert are the primitives). Reopened if tag-filtered search arrives: tags live in `meta` JSON with no `vault_tags` table, so that item repeats this one-way-door analysis.
+
+### 2026-09-29 — Session-Scoped Summaries; Vault Kind Renames
+
+**Context:** Issue #28 (Agent Manager #4, result collection). The transcript
+(`events`, shipped via #27) already persists every reply; `run_summary` /
+`run_record` (2026-09-20) were named before any writer existed. Brainstorming
+settled the product shape: the user-side deliverable is one LLM-written
+summary per session (what was done + end result) serving both the result
+viewer and CM #5's Tier-1 archival. The "run" prefix collided with
+whole-session intuition; with zero rows written, renaming is an enum change,
+not a migration.
+
+**Options Considered:** 1) per-turn summaries (N LLM calls per exchange,
+fragmented narrative); 2) deterministic compilation (rejected by product
+owner); 3) session-scoped LLM summary, cached as a vault item, refreshed
+when `covered_seq < seq_max`.
+
+**Decision:** Option 3. `SessionSummarizer` (`octave.agent.summaries`)
+generates out-of-band — never inside `MessageRouter.deliver()`. The
+`covered_seq < seq_max` freshness rule drives regeneration; cached reads
+go through `peek`. Summary generation writes a `VaultKind.SESSION_SUMMARY`
+item under the deterministic id `session_summary:<session_id>` via
+`VaultStore` (never commits; LLM call precedes any DB write). The
+model-facing material renders through a `TranscriptDigest` protocol
+(`HeadTailDigest` default). Renamed `RUN_SUMMARY → SESSION_SUMMARY`,
+`RUN_RECORD → TRANSCRIPT_CHUNK`.
+
+**Rationale:** events = canonical recording (replay, turn input); vault =
+derived search index (embeddable prose). Chunking stays CM #5's policy call —
+never one vault row per event. The rename door closes the moment #28 writes
+items, per the 2026-09-21 one-way-door precedent.
+
+**Consequences:** The vault gains its first writer from the agent plane.
+`TurnRecord` remains CM #5's verbatim-chunking seam, unchanged. Summary
+staleness is computed on read; no invalidation machinery. Follow-up issues:
+search-augmented digest, map-reduce digest, result-viewer UI wiring.

@@ -12,6 +12,13 @@
 1. `SessionSummarizer.__init__` takes an extra `db_adapter: DbAdapter` parameter — `VaultStore` requires one ([`vault_store.py:52`](backend/src/octave/db/vault_store.py)). The spec's constructor listing omitted it.
 2. The spec's git-commit of the design doc rides Task 1's commit (architect mode has no shell).
 
+**Deviations recorded during execution (2026-09-30):**
+1. Task 3's test-file header omitted `VaultKind` (needed by the peek tests) — added.
+2. The plan's verbatim code blocks tripped the ruff E501 gate in three spots (`HeadTailDigest.__init__` signature, the collect-test `ScriptedAdapter([...])` line) — wrapped to multi-line, semantics unchanged.
+3. Task 6 + its Step 4 title-fallback tests were committed as one commit (`test(agent): pin SessionSummarizer error and binding-resolution contracts`) because both test sets were already satisfied by the Tasks 3–5 implementation and appended in a single batch; the separate title-fallback commit message was not created.
+4. The ADR Decision paragraph is lightly reworded from the plan's text (same semantics: out-of-band generation, `covered_seq < seq_max` staleness, deterministic vault item, digest seam, kind renames).
+5. Plan Step numbering under Task 6 has a stray "Step 4/5/6" for the title tests; executed as written (tests appended, run, committed).
+
 **Conventions for every task:**
 - Test command: `cd backend && uv run pytest <file> -v`
 - Lint/type gate before commit: `cd backend && uv run ruff check src tests && uv run mypy src`

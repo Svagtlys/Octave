@@ -186,6 +186,23 @@ Library-only: no routes; one `deliver()` is one caller-owned transaction (never
 commits). Design:
 [`.agents/specs/2026-09-28-agent-message-routing-design.md`](../.agents/specs/2026-09-28-agent-message-routing-design.md).
 
+**Implemented — session result collection (issue #28):** `SessionSummarizer`
+(`octave.agent.summaries`) produces the Tier-1 headline: one LLM-written summary
+per session (what was done + end result), cached as a `SESSION_SUMMARY` vault item
+under the deterministic id `session_summary:<session_id>`. Generation is
+out-of-band — never inside `MessageRouter.deliver()`; the LLM call precedes any DB
+write. Freshness is computed, never stored: `collect()` returns the cached item when
+its `covered_seq` equals the transcript's latest seq, regenerates when the
+transcript grew, and `peek()` reads without ever calling the adapter. Model
+selection reuses `resolve_model`/`ModelBinding` (#25); the model-facing material
+renders through a `TranscriptDigest` protocol (`HeadTailDigest` default; search-
+and map-reduce strategies are filed follow-ups). The `events` transcript remains
+canonical — vault summaries are derived, and `VaultStore` conventions hold (never
+commits). Vault kinds renamed `run_summary`/`run_record` →
+`session_summary`/`transcript_chunk` before any row shipped (ADR 2026-09-29).
+Library-only: no routes; result-viewer UI wiring is a filed follow-up. Design:
+[`.agents/specs/2026-09-29-agent-result-collection-design.md`](../.agents/specs/2026-09-29-agent-result-collection-design.md).
+
 ---
 
 ## Data Layer

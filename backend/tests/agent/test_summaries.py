@@ -525,3 +525,30 @@ async def test_title_falls_back_to_session_id_when_no_user_message(
         summary = await summarizer.collect("s_1")
     assert summary is not None
     assert summary.title == "Session s_1"  # f"Session {id[:8]}" — "s_1" is 3 chars
+
+
+async def test_digest_zero_tail_does_not_slice_whole_transcript() -> None:
+    from octave.agent.summaries import HeadTailDigest, SummaryContext
+
+    events = [
+        _event(seq, EventKind.USER_MESSAGE, f"msg {seq}", "p_u1")
+        for seq in range(1, 6)
+    ]
+    digest = await HeadTailDigest(head_events=1, tail_events=0).digest(
+        SummaryContext(session_id="s_1", events=events, labels=_labels())
+    )
+    lines = digest.splitlines()
+    assert lines[0] == "User: msg 1"
+    assert "4 earlier events omitted" in lines[-1]
+    assert len(lines) == 2  # head + marker only; tail_events=0 contributes nothing
+
+
+def test_digest_rejects_negative_counts() -> None:
+    from octave.agent.summaries import HeadTailDigest
+
+    with pytest.raises(ValueError):
+        HeadTailDigest(head_events=-1)
+    with pytest.raises(ValueError):
+        HeadTailDigest(tail_events=-1)
+    with pytest.raises(ValueError):
+        HeadTailDigest(tool_line_chars=0)

@@ -84,7 +84,8 @@ class HeadTailDigest:
     """Default strategy. Whole transcript when
     ``len(events) <= head_events + tail_events``; else first ``head_events``
     + last ``tail_events`` with a ``… N earlier events omitted …`` marker
-    between them (N = number omitted)."""
+    between them (N = number omitted). Zero counts are legal and mean
+    "no head"/"no tail"."""
 
     def __init__(
         self,
@@ -93,6 +94,10 @@ class HeadTailDigest:
         tail_events: int = 40,
         tool_line_chars: int = 200,
     ) -> None:
+        if head_events < 0 or tail_events < 0:
+            raise ValueError("head_events/tail_events must be >= 0")
+        if tool_line_chars < 1:
+            raise ValueError("tool_line_chars must be >= 1")
         self._head_events = head_events
         self._tail_events = tail_events
         self._tool_line_chars = tool_line_chars
@@ -105,7 +110,12 @@ class HeadTailDigest:
             ]
         else:
             head = events[: self._head_events]
-            tail = events[-self._tail_events :]
+            # ``events[-0:]`` would slice the whole transcript; slice
+            # explicitly when a tail is requested.
+            if self._tail_events:
+                tail = events[len(events) - self._tail_events :]
+            else:
+                tail = []
             omitted = len(events) - len(head) - len(tail)
             lines = [
                 _render_line(e, ctx.labels, self._tool_line_chars) for e in head

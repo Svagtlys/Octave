@@ -9,6 +9,7 @@ task; ruff's F401 gate runs at every commit, so import nothing early.
 from collections.abc import AsyncIterator
 from pathlib import Path
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -195,6 +196,72 @@ async def test_peek_returns_none_when_absent(
     async with factory() as session:
         summarizer = _summarizer(session, adapter, ScriptedAdapter([]))
         assert await summarizer.peek("s_1") is None
+
+
+async def test_collect_raises_session_not_found(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    from octave.agent.errors import SessionNotFoundError
+
+    adapter, factory = env
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, ScriptedAdapter([]))
+        with pytest.raises(SessionNotFoundError):
+            await summarizer.collect("s_missing")
+
+
+async def test_collect_empty_transcript_returns_none(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    adapter, factory = env
+    scripted = ScriptedAdapter([])
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, scripted)
+        assert await summarizer.collect("s_1") is None
+    assert scripted.complete_calls == []
+
+
+async def test_collect_generates_persists_and_returns(
+    env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]
+) -> None:
+    adapter, factory = env
+    await _seed_transcript(factory)
+    scripted = ScriptedAdapter(
+        [_completion("Title: Greeting\nAlice greeted; Echo replied.")]
+    )
+    async with factory() as session:
+        summarizer = _summarizer(session, adapter, scripted)
+        summary = await summarizer.collect("s_1")
+        await session.commit()
+    assert summary is not None
+    assert summary.title == "Greeting"
+    assert summary.content == "Alice greeted; Echo replied."
+    assert summary.covered_seq == 2
+    assert summary.owner_user_id == "u_1"
+    assert summary.model_name == "summarizer-1"
+
+    # The vault item landed with deterministic id, kind, meta, no embedding.
+    from octave.db.vault_store import VaultStore
+
+    async with factory() as session:
+        item = await VaultStore(adapter, session).get("session_summary:s_1")
+    assert item is not None
+    assert item.kind == "session_summary"
+    assert item.user_id == "u_1"
+    assert item.meta == {
+        "session_id": "s_1",
+        "covered_seq": 2,
+        "model_name": "summarizer-1",
+    }
+    assert item.embedding is None
+
+    # One completion: system instruction + digest with participant labels.
+    assert len(scripted.complete_calls) == 1
+    request = scripted.complete_calls[0]
+    assert request.model == "summarizer-1"
+    assert request.messages[0].role == "system"
+    assert "Title:" in request.messages[0].content
+    assert request.messages[1].content == "User: hello\nEcho: hi there"
 
 
 async def test_peek_reads_item_written_by_vault_store(

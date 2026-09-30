@@ -15,14 +15,18 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from octave.agent.errors import SessionNotFoundError, SummaryError
+from octave.agent.instances import resolve_model
 from octave.db.adapter import DbAdapter
 from octave.db.event_store import EventStore
-from octave.db.models import Event, VaultItem
-from octave.db.types import EventKind, ModelBinding
+from octave.db.models import Event, Participant, Session, VaultItem
+from octave.db.types import EventKind, ModelBinding, VaultKind
 from octave.db.vault_store import VaultStore
 from octave.inference.adapter import InferenceAdapter
+from octave.inference.types import CompletionRequest, Message
 
 __all__ = [
     "HeadTailDigest",
@@ -180,3 +184,107 @@ class SessionSummarizer:
         if item is None:
             return None
         return _to_summary(item, session_id)
+
+    async def collect(
+        self, session_id: str, *, force: bool = False
+    ) -> SessionSummary | None:
+        """Fresh cached summary, or generate + persist. Empty transcript →
+        None (no LLM call, no item written)."""
+        session_row = await self._session.get(Session, session_id)
+        if session_row is None:
+            raise SessionNotFoundError(session_id)
+        events = await self._events.read(session_id)
+        if not events:
+            return None
+        seq_max = events[-1].seq
+        # Task 5 inserts the cache check here.
+        return await self._generate(session_row, events, seq_max)
+
+    async def _generate(
+        self, session_row: Session, events: list[Event], seq_max: int
+    ) -> SessionSummary:
+        labels = await self._labels(events)
+        digest_text = await self._digest.digest(
+            SummaryContext(session_id=session_row.id, events=events, labels=labels)
+        )
+        resolved = resolve_model(self._binding, tag_lookup=self._tag_lookup)
+        adapter = self._adapter_for(resolved.adapter)
+        result = await adapter.complete(
+            CompletionRequest(
+                model=resolved.model,
+                messages=[
+                    Message(role="system", content=_SYSTEM_INSTRUCTION),
+                    Message(role="user", content=digest_text),
+                ],
+            )
+        )
+        text = result.text.strip()
+        if not text:
+            raise SummaryError(
+                f"summary generation for {session_row.id} returned empty content"
+            )
+        title, body = _parse_summary(text, session_row=session_row, events=events)
+        item = await self._vault.upsert(
+            item_id=_item_id(session_row.id),
+            user_id=session_row.created_by_user_id,
+            kind=VaultKind.SESSION_SUMMARY,
+            name=title,
+            content=body,
+            meta={
+                "session_id": session_row.id,
+                "covered_seq": seq_max,
+                "model_name": result.model,
+            },
+        )
+        summary = _to_summary(item, session_row.id)
+        assert summary is not None  # written by us; meta is well-formed
+        return summary
+
+    async def _labels(self, events: list[Event]) -> dict[str, str]:
+        author_ids = {
+            event.author_participant_id
+            for event in events
+            if event.author_participant_id
+        }
+        if not author_ids:
+            return {}
+        rows = await self._session.execute(
+            select(Participant.id, Participant.label).where(
+                Participant.id.in_(author_ids)
+            )
+        )
+        return {participant_id: label for participant_id, label in rows.all()}
+
+
+_SYSTEM_INSTRUCTION = (
+    "You are writing a recap of an agent session for the user who owns it. "
+    "Summarize what was done and state the end result. "
+    "The first line must be exactly 'Title: <short title>' followed by the "
+    "recap body."
+)
+
+
+def _fallback_title(session_row: Session, events: list[Event]) -> str:
+    """session.title → first user message (truncated) → Session <id[:8]>."""
+    if session_row.title:
+        return session_row.title
+    for event in events:
+        if event.kind == EventKind.USER_MESSAGE:
+            content = str(event.payload.get("content", "")).strip()
+            if content:
+                return content[:60]
+    return f"Session {session_row.id[:8]}"
+
+
+def _parse_summary(
+    text: str, *, session_row: Session, events: list[Event]
+) -> tuple[str, str]:
+    """Split the model's Title line from the body; fall back when the
+    contract is ignored. Malformed output never fails a generation."""
+    head, sep, rest = text.partition("\n")
+    if sep and head.strip().lower().startswith("title:"):
+        title = head.strip()[len("Title:"):].strip()
+        body = rest.strip()
+        if title and body:
+            return title, body
+    return _fallback_title(session_row, events), text

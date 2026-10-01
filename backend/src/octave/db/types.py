@@ -6,9 +6,9 @@ the app-level validation layer. A DB ``CHECK`` would force an ``ALTER TABLE``
 (a table rebuild on SQLite) for every new kind, so the enum is deliberately
 the single source of truth and grows freely.
 
-Only the two message payload models ship — the kinds this work item writes.
-``tool_call`` / ``tool_result`` / ``system`` payloads pass through as validated
-JSON dicts until their consumers exist.
+Only the models with first-class writers ship — the two message payloads and
+``context_injection`` (issue #34). ``tool_call`` / ``tool_result`` / ``system``
+payloads pass through as validated JSON dicts until their consumers exist.
 """
 
 from dataclasses import dataclass

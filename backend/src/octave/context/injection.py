@@ -23,7 +23,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from octave.context.errors import AgentNotFound, ParticipantNotFound, SessionNotFound
 from octave.db.event_store import EventStore
-from octave.db.models import Agent, Event, Participant, Session, VaultItem
+from octave.db.models import (
+    Agent,
+    Event,
+    Participant,
+    Session,
+    SessionParticipant,
+    VaultItem,
+)
 from octave.db.types import (
     AgentAssignments,
     ContextInjectionPayload,
@@ -147,10 +154,13 @@ class ContextInjector:
     ) -> ContextBundle | None:
         """Idempotent session-start write: the agent's participant already
         holding a ``context_injection`` event in this session short-circuits
-        to None. Otherwise append exactly one snapshot event (harness-
-        authored: author NULL, targeted at the agent). Never commits."""
-        bundle = await self.select(session_id=session_id, agent_id=agent_id)
-        participant_id = await self._agent_participant(agent_id)
+        to None (before any selection work). Otherwise append exactly one
+        snapshot event (harness-authored: author NULL, targeted at the
+        agent). Never commits."""
+        session_row = await self._session.get(Session, session_id)
+        if session_row is None:
+            raise SessionNotFound(session_id)
+        participant_id = await self._agent_participant(agent_id, session_id)
         existing = await self._session.execute(
             select(Event.id)
             .where(
@@ -162,6 +172,7 @@ class ContextInjector:
         )
         if existing.scalar_one_or_none() is not None:
             return None
+        bundle = await self.select(session_id=session_id, agent_id=agent_id)
         payload = ContextInjectionPayload(
             agent_id=agent_id,
             items=[
@@ -193,9 +204,22 @@ class ContextInjector:
             )
             return AgentAssignments()
 
-    async def _agent_participant(self, agent_id: str) -> str:
+    async def _agent_participant(self, agent_id: str, session_id: str) -> str:
+        """Resolve the agent's participant, requiring membership in the
+        target session. ``events.target_participant_id`` carries a composite
+        FK onto ``session_participants``; joining here turns a not-spawned-
+        into-this-session agent into ParticipantNotFound instead of a raw
+        IntegrityError at append time."""
         row = await self._session.execute(
-            select(Participant.id).where(Participant.agent_id == agent_id)
+            select(Participant.id)
+            .join(
+                SessionParticipant,
+                SessionParticipant.participant_id == Participant.id,
+            )
+            .where(
+                Participant.agent_id == agent_id,
+                SessionParticipant.session_id == session_id,
+            )
         )
         participant_id = row.scalar_one_or_none()
         if participant_id is None:

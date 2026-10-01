@@ -1,8 +1,9 @@
-"""Context Manager service layer (issue #35).
+"""Context Manager service layer (issues #34, #35).
 
 Archives completed agent runs into the vault for future linked runs to
-query. Imports ``octave.db`` + ``octave.inference`` only — never
-``octave.agent`` (design spec 2026-09-30, Decision 9).
+query, and injects standing vault context (preferences / skills / prompts)
+per agent at session start. Imports ``octave.db`` + ``octave.inference``
+only — never ``octave.agent`` (design spec 2026-09-30, Decision 9).
 """
 
 from octave.context.archiver import ArchiveReport, ContextArchiver

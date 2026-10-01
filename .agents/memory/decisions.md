@@ -267,4 +267,9 @@ router/archiver regressions are pinned (injection events are anchors,
 never chat history). `vault_tags` promotion trigger unchanged.
 `preference_tags` removal remains a one-line delete once no writer sets
 it. Corrupt-JSON tolerance is deliberate (registry precedent) — loud
-selection would let one bad row poison every session.
+selection would let one bad row poison every session. Membership in the
+target session is required to inject (join through `session_participants`
+turns the composite-FK IntegrityError into `ParticipantNotFound`).
+`ensure_injected` is check-then-write (not concurrency-safe); fine under
+single-writer SQLite — a partial unique index or conditional insert is the
+fix if the composition root ever goes multi-process.

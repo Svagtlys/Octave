@@ -417,6 +417,24 @@ async def test_ensure_injected_requires_participant(env) -> None:
             await ContextInjector(s).ensure_injected(session_id="s_1", agent_id="a_1")
 
 
+async def test_ensure_injected_requires_session_membership(env) -> None:
+    """Participant row exists but the agent was never spawned into s_1:
+    domain error, not the composite-FK IntegrityError at append time."""
+    import pytest
+
+    await _seed(
+        env, sessions={"s_1": "u_1"}, agents={"a_1": {}}, participants=False
+    )
+    _adapter, factory = env
+    async with factory() as s:
+        s.add(Participant(id="p_a_1", agent_id="a_1", label="a_1"))
+        await s.commit()
+    async with factory() as s:
+        with pytest.raises(ParticipantNotFound):
+            await ContextInjector(s).ensure_injected(session_id="s_1", agent_id="a_1")
+    assert await _injection_events(env) == []
+
+
 async def test_rollback_leaves_no_event(env) -> None:
     await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
     await _item(

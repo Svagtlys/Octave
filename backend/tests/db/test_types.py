@@ -126,3 +126,9 @@ def test_assignments_defaults_are_empty() -> None:
 def test_assignments_allow_extra_keys() -> None:
     assignments = AgentAssignments.model_validate({"workflow": "vi_1"})
     assert assignments.workflow == "vi_1"
+
+
+def test_event_kind_context_injection_value_stable() -> None:
+    assert EventKind.CONTEXT_INJECTION == "context_injection"
+    assert EventKind("context_injection") is EventKind.CONTEXT_INJECTION
+    assert str(EventKind.CONTEXT_INJECTION) == "context_injection"

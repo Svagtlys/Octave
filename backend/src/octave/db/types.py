@@ -40,6 +40,9 @@ class EventKind(StrEnum):
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     SYSTEM = "system"
+    CONTEXT_INJECTION = "context_injection"
+    """Harness-authored standing context injected at session start (issue #34).
+    Never authored by a participant; targets one agent participant."""
 
 
 class VaultKind(StrEnum):

@@ -90,7 +90,7 @@
 - [ ] 1. Design context vault data model (skills, prompts, preferences, agent state schemas)
 - [x] 2. Implement vector-capable storage layer for context vault (CRUD operations, queries, vector indexing) — PR #97
 - [ ] 3. Build context vault using tagged MCP tools (discover and invoke tagged tools to populate skills, prompts, and preferences into the vault) [Depends on: MCP Connector #8–10]
-- [ ] 4. Create context injection engine (select relevant context items based on rules/triggers)
+- [x] 4. Create context injection engine (select relevant context items based on rules/triggers) — PR #117 (dual-tag + additive-assignment selection; session-start durability via `context_injection` transcript event; `every_turn` and found-context deferred)
 - [x] 5. Implement agent context lifecycle (receive full context from completed agent runs via Agent Manager, embed into vector DB for future linked agent runs to query) — PR #114 (pull-only `ContextArchiver` over reconstructed turn brackets; verbatim `transcript_chunk` writer; Tier-1 `session_summary` embedding via read-modify-write; new `octave.context` plane)
 - [ ] 6. Add context relevance scoring or filtering (token budget management, priority ranking)
 - [ ] 7. Build external database adapter interface (optional MCP-provided database override)

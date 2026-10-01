@@ -182,3 +182,49 @@ items, per the 2026-09-21 one-way-door precedent.
 `TurnRecord` remains CM #5's verbatim-chunking seam, unchanged. Summary
 staleness is computed on read; no invalidation machinery. Follow-up issues:
 search-augmented digest, map-reduce digest, result-viewer UI wiring.
+
+### 2026-09-30 — Pull-Only Context Archival via Reconstructed Turn Brackets
+
+**Context:** Issue #35 (CM #5): capture completed agent runs, embed into
+the vector DB for future linked runs to query. #28 shipped session
+summaries with NULL embeddings (embed deferred here); the 2026-09-20 ADR
+defined `transcript_chunk` but no writer existed. `TurnRecord` is
+ephemeral — returned in `RouteOutcome.turns`, never persisted.
+
+**Options Considered:** 1) push — callers pass `RouteOutcome.turns` to
+the archiver (exact claim points, but every consumer must hold and
+forward them); 2) pull — `archive(session_id)` reconstructs brackets from
+the transcript (bracket = `(max(prev_agent_reply_seq,
+last_non_agent_event_seq), reply_seq]`; failed turns close nothing, so
+orphan events produce no bracket — same outcome as push); 3) persist
+`TurnRecord`s in a new table (schema change to store what the transcript
+already encodes).
+
+**Decision:** Option 2, and both tiers ship. New package
+`octave/context/` (CM's first service module): pure `brackets.py` +
+`chunks.py`, one `ContextArchiver.archive(session_id)` orchestrator.
+Chunk-per-bracket, verbatim (distinct from digest rendering),
+deterministic id `transcript_chunk:<session_id>:<seq_start>-<seq_end>`
+(+`:part` for the `max_chars` safety split at whitespace). Embedding via
+a dedicated `ModelBinding` + `adapter_for` seam; re-embed iff
+`embedding IS NULL` or `embedding_model != resolved model`. The archiver
+embeds only — never generates prose; summary-absent skips Tier-1.
+`octave.context` never imports `octave.agent`: binding resolution is
+duplicated (~15 lines) rather than imported; CM-local
+`SessionNotFound`/`ModelBindingNotResolved` mirror agent error names with
+independent types. `max_chars` derives from the embedding model's INPUT
+context window (chars ≈ tokens × 3–4, conservative default 6000) — not
+`embedding_dim`; boundaries freeze at first archival.
+
+**Rationale:** Reconstruction provably equals router claim points on
+committed transcripts (equivalence test pinned against the shipped
+router). Deterministic ids + immutable events make idempotence fall out
+— no watermark table, no invalidation machinery. One entry point serves
+post-deliver(), backfill, and future scheduling (AM #6) identically.
+
+**Consequences:** The vault's Tier-2 corpus gains its first writer; the
+"future linked runs can query it" promise is discharged through the
+shipped filtered `VaultStore.search` (proven end-to-end), not a new
+query surface (CM #11). `max_chars` changes never re-split archived
+brackets. CM #10 (conversation indexing) overlap recorded as an open
+question. Resolver duplication is debt: extract on a third consumer.

@@ -100,6 +100,22 @@ Central knowledge and context assembly subsystem. Manages the context vault — 
 - **Vector Search Query Interface** — Semantic similarity search across conversations and vault items
 - **Skill-to-Model Linking** — Attaches required model capability tags to skills; resolves to matching models at runtime via the Inference Engine Connector's model tagging system
 
+**Implemented — pull-only context archival (issue #35):** the `octave.context`
+package is the Context Manager's first service module. `ContextArchiver.archive(session_id)`
+reconstructs turn brackets from the session transcript (`brackets.py`: a bracket spans
+from the previous anchor event to an agent reply; failed turns close nothing), renders
+each verbatim into one `transcript_chunk` vault item (`chunks.py`, full content — distinct
+from the summarizer's digest budget; `max_chars` safety split at whitespace), and embeds
+Tier-1 `session_summary` items via read-modify-write (prose owned by
+`octave.agent.summaries`, embeddings owned here). Idempotence falls out of deterministic
+ids (`transcript_chunk:<session>:<seq_start>-<seq_end>`) and "skip iff embedded by the
+current model". Plane ban enforced by AST guard: `octave.context` never imports
+`octave.agent` (binding resolution and CM-local errors are deliberate mirrors). The
+archiver embeds only — never generates prose; `max_chars` derives from the embedding
+model's input context window (conservative default 6000). Library-only: routes/lifespan
+wiring arrives with Integration & Testing #1. Design:
+[`.agents/specs/2026-09-30-agent-context-lifecycle-design.md`](../.agents/specs/2026-09-30-agent-context-lifecycle-design.md).
+
 **Key interactions:**
 - Populates vault using tagged tools from the **MCP Connector**
 - Supplies assembled context bundles to the **Inference Engine Connector**

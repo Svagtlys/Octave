@@ -21,10 +21,13 @@ __all__ = [
     "AgentAssignments",
     "AgentStatus",
     "AssistantMessagePayload",
+    "ContextInjectionPayload",
     "EventKind",
     "ExplicitModelBinding",
+    "InjectedContextItem",
     "InstanceStatus",
     "ModelBinding",
+    "SelectionReason",
     "TagModelBinding",
     "UserMessagePayload",
     "VaultKind",
@@ -134,3 +137,29 @@ class AssistantMessagePayload(BaseModel):
 
     content: str
     model_name: str | None = None
+
+
+SelectionReason = Literal["explicit", "global", "agent_tag"]
+"""Why an item was selected (issue #34). Extension seam for CM #11:
+a future ``retrieved`` member adds found-context provenance."""
+
+
+class InjectedContextItem(BaseModel):
+    """One injected vault item, snapshotted at injection time. ``kind`` is
+    the verbatim ``vault_items.kind`` string; ``content`` is the exact prose
+    the agent was given (the transcript records what was seen, immune to
+    later vault edits)."""
+
+    item_id: str
+    kind: str
+    name: str
+    content: str
+    reason: SelectionReason
+
+
+class ContextInjectionPayload(BaseModel):
+    """``context_injection`` event payload: what the harness told one agent
+    at session start (issue #34)."""
+
+    agent_id: str
+    items: list[InjectedContextItem]

@@ -7,6 +7,7 @@ from octave.db.types import (
     AgentAssignments,
     AgentStatus,
     AssistantMessagePayload,
+    ContextInjectionPayload,
     EventKind,
     InstanceStatus,
     ModelBinding,
@@ -132,3 +133,42 @@ def test_event_kind_context_injection_value_stable() -> None:
     assert EventKind.CONTEXT_INJECTION == "context_injection"
     assert EventKind("context_injection") is EventKind.CONTEXT_INJECTION
     assert str(EventKind.CONTEXT_INJECTION) == "context_injection"
+
+
+def test_context_injection_payload_round_trip() -> None:
+    payload = ContextInjectionPayload(
+        agent_id="a_1",
+        items=[
+            {
+                "item_id": "v_1",
+                "kind": "preference",
+                "name": "form-of-address",
+                "content": "Call the user Momo.",
+                "reason": "global",
+            }
+        ],
+    )
+    dumped = payload.model_dump()
+    assert dumped["agent_id"] == "a_1"
+    assert dumped["items"][0]["reason"] == "global"
+
+
+def test_context_injection_payload_rejects_bad_reason() -> None:
+    with pytest.raises(ValidationError):
+        ContextInjectionPayload(
+            agent_id="a_1",
+            items=[
+                {
+                    "item_id": "v_1",
+                    "kind": "skill",
+                    "name": "n",
+                    "content": "c",
+                    "reason": "vibes",
+                }
+            ],
+        )
+
+
+def test_context_injection_payload_requires_agent_id() -> None:
+    with pytest.raises(ValidationError):
+        ContextInjectionPayload(items=[])  # type: ignore[call-arg]

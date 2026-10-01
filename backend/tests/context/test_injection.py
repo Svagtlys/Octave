@@ -442,3 +442,57 @@ async def test_injection_payload_validated_on_append(env) -> None:
             await EventStore(s).append(
                 "s_1", EventKind.CONTEXT_INJECTION, payload={"items": []}
             )  # agent_id missing
+
+
+async def test_router_transcript_skips_injection_events(env) -> None:
+    """_transcript_messages must ignore context_injection (chat history and
+    the decider tail stay clean — design spec §Interaction)."""
+    from octave.agent.router import (
+        _transcript_messages,  # tests may import the agent plane
+    )
+    from octave.db.event_store import EventStore
+
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
+    _adapter, factory = env
+    async with factory() as s:
+        store = EventStore(s)
+        await store.append(
+            "s_1",
+            EventKind.USER_MESSAGE,
+            author_participant_id="p_a_1",
+            payload={"content": "hi"},
+        )
+        await store.append(
+            "s_1",
+            EventKind.CONTEXT_INJECTION,
+            target_participant_id="p_a_1",
+            payload={"agent_id": "a_1", "items": []},
+        )
+        events = await store.read("s_1")
+        messages = _transcript_messages(events)
+        assert [m.content for m in messages] == ["hi"]
+
+
+def test_archiver_anchors_injection_events() -> None:
+    """Unauthored context_injection is an anchor: excluded from brackets,
+    its prose never chunked (already verbatim in the vault)."""
+    from octave.context.brackets import reconstruct_turns
+    from octave.db.models import Event
+
+    def _event(seq: int, kind: EventKind, author: str | None) -> Event:
+        return Event(
+            id=f"e{seq}",
+            session_id="s_1",
+            seq=seq,
+            kind=str(kind),
+            author_participant_id=author,
+            payload={},
+        )
+
+    events = [
+        _event(1, EventKind.CONTEXT_INJECTION, None),
+        _event(2, EventKind.TOOL_CALL, "p_a1"),
+        _event(3, EventKind.ASSISTANT_MESSAGE, "p_a1"),
+    ]
+    brackets = reconstruct_turns(events, {"p_a1": "a_1"})
+    assert [(b.seq_start, b.seq_end) for b in brackets] == [(2, 3)]

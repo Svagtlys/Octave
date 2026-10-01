@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from octave.db.models import Event
 from octave.db.types import (
     AssistantMessagePayload,
+    ContextInjectionPayload,
     EventKind,
     UserMessagePayload,
 )
@@ -34,6 +35,7 @@ __all__ = ["EventStore"]
 _PAYLOAD_MODELS: dict[EventKind, type[BaseModel]] = {
     EventKind.USER_MESSAGE: UserMessagePayload,
     EventKind.ASSISTANT_MESSAGE: AssistantMessagePayload,
+    EventKind.CONTEXT_INJECTION: ContextInjectionPayload,
 }
 
 _RETRY_LIMIT = 2

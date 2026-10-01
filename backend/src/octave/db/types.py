@@ -6,9 +6,9 @@ the app-level validation layer. A DB ``CHECK`` would force an ``ALTER TABLE``
 (a table rebuild on SQLite) for every new kind, so the enum is deliberately
 the single source of truth and grows freely.
 
-Only the two message payload models ship — the kinds this work item writes.
-``tool_call`` / ``tool_result`` / ``system`` payloads pass through as validated
-JSON dicts until their consumers exist.
+Only the models with first-class writers ship — the two message payloads and
+``context_injection`` (issue #34). ``tool_call`` / ``tool_result`` / ``system``
+payloads pass through as validated JSON dicts until their consumers exist.
 """
 
 from dataclasses import dataclass
@@ -21,10 +21,13 @@ __all__ = [
     "AgentAssignments",
     "AgentStatus",
     "AssistantMessagePayload",
+    "ContextInjectionPayload",
     "EventKind",
     "ExplicitModelBinding",
+    "InjectedContextItem",
     "InstanceStatus",
     "ModelBinding",
+    "SelectionReason",
     "TagModelBinding",
     "UserMessagePayload",
     "VaultKind",
@@ -40,6 +43,9 @@ class EventKind(StrEnum):
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     SYSTEM = "system"
+    CONTEXT_INJECTION = "context_injection"
+    """Harness-authored standing context injected at session start (issue #34).
+    Never authored by a participant; targets one agent participant."""
 
 
 class VaultKind(StrEnum):
@@ -102,13 +108,34 @@ class AgentAssignments(BaseModel):
     References are app-validated strings; dangling references are tolerated
     at resolution time (skip + warn). Link-table promotion triggers live in
     the design spec. Extra keys allowed, mirroring the ``vault_items.meta``
-    convention (ADR 2026-09-20)."""
+    convention (ADR 2026-09-20).
+
+    Selection vocabulary (issue #34): ``tags`` is the agent's capability-tag
+    set matched against item ``meta.tags``; ``preference_tags`` is a
+    deprecated alias folded into :attr:`effective_tags`. ``skills`` and
+    ``preference_names`` are explicit by-name selections, additive to the
+    tag-matched ones.
+    """
 
     model_config = ConfigDict(extra="allow")
 
     prompt: str | None = None
     skills: list[str] = Field(default_factory=list)
     preference_tags: list[str] = Field(default_factory=list)
+    """DEPRECATED alias of ``tags`` (issue #34). Kept for stored JSON;
+    removal is a one-line delete once no writer sets it."""
+    tags: list[str] = Field(default_factory=list)
+    preference_names: list[str] = Field(default_factory=list)
+
+    @property
+    def effective_tags(self) -> list[str]:
+        """Case-folded, order-stable dedup union of ``tags`` and the
+        deprecated ``preference_tags``. Read-only; excluded from
+        serialization (plain property, not a pydantic field)."""
+        seen: dict[str, None] = {}
+        for tag in [*self.tags, *self.preference_tags]:
+            seen.setdefault(tag.lower())
+        return list(seen)
 
 
 @dataclass(frozen=True)
@@ -131,3 +158,29 @@ class AssistantMessagePayload(BaseModel):
 
     content: str
     model_name: str | None = None
+
+
+SelectionReason = Literal["explicit", "global", "agent_tag"]
+"""Why an item was selected (issue #34). Extension seam for CM #11:
+a future ``retrieved`` member adds found-context provenance."""
+
+
+class InjectedContextItem(BaseModel):
+    """One injected vault item, snapshotted at injection time. ``kind`` is
+    the verbatim ``vault_items.kind`` string; ``content`` is the exact prose
+    the agent was given (the transcript records what was seen, immune to
+    later vault edits)."""
+
+    item_id: str
+    kind: str
+    name: str
+    content: str
+    reason: SelectionReason
+
+
+class ContextInjectionPayload(BaseModel):
+    """``context_injection`` event payload: what the harness told one agent
+    at session start (issue #34)."""
+
+    agent_id: str
+    items: list[InjectedContextItem]

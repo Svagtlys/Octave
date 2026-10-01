@@ -228,3 +228,48 @@ shipped filtered `VaultStore.search` (proven end-to-end), not a new
 query surface (CM #11). `max_chars` changes never re-split archived
 brackets. CM #10 (conversation indexing) overlap recorded as an open
 question. Resolver duplication is debt: extract on a third consumer.
+
+### 2026-10-01 — Context Injection: Dual-Tag Selection + Session-Start Durability
+
+**Context:** CM #4 (issue #34): select standing vault context (prompt /
+preferences / skills) per agent and inject it durably, without a migration
+and without model calls. Selection needed a rule that composes with both
+the shipped tag registry and the per-agent `assignments` JSON column.
+
+**Options Considered:**
+1. Vector relevance scoring at selection time (CM #6/#11 territory).
+2. Pure explicit assignment (every item named per agent).
+3. Dual tagging (reserved `global` tag + agent tag intersection) additively
+   unioned with explicit by-name assignments.
+
+**Decision:** Option 3, injected once per (session, agent) as a
+`context_injection` transcript event (session-start cadence). `EventKind`
+grows one member; `AgentAssignments` gains `tags` / `preference_names` +
+computed `effective_tags`; two pydantic payload models register in
+`EventStore._PAYLOAD_MODELS` (append-only validation). Selection is a
+direct SELECT over the vault (owner-scoped, kind-partitioned: prompts are
+assignment-only, preferences/skills dual-tagged); corruption (malformed
+`meta.tags`, bad `assignments` JSON) degrades to untagged/empty with a
+warning. `ensure_injected` is idempotent per (session, agent participant).
+`octave.context` never imports `octave.agent` or `octave.inference`.
+
+**Rationale:** Tags carry zero-migration metadata in JSON columns; the
+reserved `global` tag and `effective_tags` give owners one lever per item
+and per agent without a join table. Durability through the shipped
+EventStore reuses seq ordering, payload validation, and rollback
+semantics for free — the injection snapshot survives crash-mid-turn, and
+the router skips the new kind so chat history and the decider are
+untouched. Session-start snapshot semantics keep selection deterministic
+mid-session; `every_turn` is the reserved post-1.0.0 fix.
+
+**Consequences:** Mid-session vault edits take effect next session. The
+router/archiver regressions are pinned (injection events are anchors,
+never chat history). `vault_tags` promotion trigger unchanged.
+`preference_tags` removal remains a one-line delete once no writer sets
+it. Corrupt-JSON tolerance is deliberate (registry precedent) — loud
+selection would let one bad row poison every session. Membership in the
+target session is required to inject (join through `session_participants`
+turns the composite-FK IntegrityError into `ParticipantNotFound`).
+`ensure_injected` is check-then-write (not concurrency-safe); fine under
+single-writer SQLite — a partial unique index or conditional insert is the
+fix if the composition root ever goes multi-process.

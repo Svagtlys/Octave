@@ -38,9 +38,14 @@ def test_no_agent_plane_imports() -> None:
 
 def test_public_names_are_exported() -> None:
     for name in (
+        "AgentNotFound",
         "ArchiveReport",
         "ContextArchiver",
+        "ContextBundle",
+        "ContextInjector",
+        "InjectedItem",
         "ModelBindingNotResolved",
+        "ParticipantNotFound",
         "SessionNotFound",
         "TurnBracket",
         "reconstruct_turns",

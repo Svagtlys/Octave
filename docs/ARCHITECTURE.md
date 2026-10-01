@@ -116,6 +116,18 @@ model's input context window (conservative default 6000). Library-only: routes/l
 wiring arrives with Integration & Testing #1. Design:
 [`.agents/specs/2026-09-30-agent-context-lifecycle-design.md`](../.agents/specs/2026-09-30-agent-context-lifecycle-design.md).
 
+**Implemented — context injection engine (issue #34):** `ContextInjector` selects standing
+vault context (prompt / preferences / skills) per agent — owner-scoped, dual-tagged (reserved
+`global` tag + intersection with the agent's `assignments.effective_tags`) additively unioned
+with explicit by-name assignments — and injects it once per (session, agent) as a durable
+`context_injection` transcript event at session start (`ensure_injected`, idempotent; membership
+in the target session required). Zero migrations: `EventKind.CONTEXT_INJECTION` plus
+`AgentAssignments.tags` / `preference_names` in the existing JSON column; payload validated on
+append via `EventStore`. Corrupt JSON degrades to untagged/empty with a warning. The router
+skips the new kind (chat history untouched); the archiver treats injection events as anchors.
+`every_turn` cadence deferred post-1.0.0. Design:
+[`.agents/specs/2026-10-01-context-injection-engine-design.md`](../.agents/specs/2026-10-01-context-injection-engine-design.md).
+
 **Key interactions:**
 - Populates vault using tagged tools from the **MCP Connector**
 - Supplies assembled context bundles to the **Inference Engine Connector**

@@ -108,13 +108,34 @@ class AgentAssignments(BaseModel):
     References are app-validated strings; dangling references are tolerated
     at resolution time (skip + warn). Link-table promotion triggers live in
     the design spec. Extra keys allowed, mirroring the ``vault_items.meta``
-    convention (ADR 2026-09-20)."""
+    convention (ADR 2026-09-20).
+
+    Selection vocabulary (issue #34): ``tags`` is the agent's capability-tag
+    set matched against item ``meta.tags``; ``preference_tags`` is a
+    deprecated alias folded into :attr:`effective_tags`. ``skills`` and
+    ``preference_names`` are explicit by-name selections, additive to the
+    tag-matched ones.
+    """
 
     model_config = ConfigDict(extra="allow")
 
     prompt: str | None = None
     skills: list[str] = Field(default_factory=list)
     preference_tags: list[str] = Field(default_factory=list)
+    """DEPRECATED alias of ``tags`` (issue #34). Kept for stored JSON;
+    removal is a one-line delete once no writer sets it."""
+    tags: list[str] = Field(default_factory=list)
+    preference_names: list[str] = Field(default_factory=list)
+
+    @property
+    def effective_tags(self) -> list[str]:
+        """Case-folded, order-stable dedup union of ``tags`` and the
+        deprecated ``preference_tags``. Read-only; excluded from
+        serialization (plain property, not a pydantic field)."""
+        seen: dict[str, None] = {}
+        for tag in [*self.tags, *self.preference_tags]:
+            seen.setdefault(tag.lower())
+        return list(seen)
 
 
 @dataclass(frozen=True)

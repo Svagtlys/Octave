@@ -51,7 +51,8 @@ class Agent(Base):
         JSON, nullable=False, default=dict
     )
     """``octave.db.types.AgentAssignments`` JSON: named vault-item references
-    (prompt / skills / preference_tags)."""
+    (prompt / skills / preference_names) and capability tags (tags, plus the
+    deprecated preference_tags alias)."""
 
     status: Mapped[str] = mapped_column(Text, nullable=False, default="active")
     """``active | paused`` (AgentStatus, app-validated) — definition-level

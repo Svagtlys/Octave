@@ -7,12 +7,23 @@ query. Imports ``octave.db`` + ``octave.inference`` only — never
 
 from octave.context.archiver import ArchiveReport, ContextArchiver
 from octave.context.brackets import TurnBracket, reconstruct_turns
-from octave.context.errors import ModelBindingNotResolved, SessionNotFound
+from octave.context.errors import (
+    AgentNotFound,
+    ModelBindingNotResolved,
+    ParticipantNotFound,
+    SessionNotFound,
+)
+from octave.context.injection import ContextBundle, ContextInjector, InjectedItem
 
 __all__ = [
+    "AgentNotFound",
     "ArchiveReport",
     "ContextArchiver",
+    "ContextBundle",
+    "ContextInjector",
+    "InjectedItem",
     "ModelBindingNotResolved",
+    "ParticipantNotFound",
     "SessionNotFound",
     "TurnBracket",
     "reconstruct_turns",

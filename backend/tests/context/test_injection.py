@@ -7,19 +7,21 @@ VaultStore (no embeddings — selection never touches the vector layer).
 
 import logging
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from octave.context.errors import AgentNotFound, ParticipantNotFound
 from octave.context.injection import ContextBundle, ContextInjector
 from octave.db.models import (
     Agent,
+    Event,
     Participant,
     Session,
     SessionParticipant,
     User,
     VaultItem,
 )
-from octave.db.types import VaultKind
+from octave.db.types import EventKind, VaultKind
 from octave.db.vault_store import VaultStore
 
 
@@ -322,3 +324,121 @@ async def test_select_raises_for_missing_session_and_agent(env) -> None:
         await _select(env, "s_missing", "a_1")
     with pytest.raises(AgentNotFound):
         await _select(env, "s_1", "a_missing")
+
+
+async def _ensure(env, session_id: str, agent_id: str):
+    _adapter, factory = env
+    async with factory() as s:
+        bundle = await ContextInjector(s).ensure_injected(
+            session_id=session_id, agent_id=agent_id
+        )
+        await s.commit()
+        return bundle
+
+
+async def _injection_events(env) -> list[Event]:
+    _adapter, factory = env
+    async with factory() as s:
+        rows = await s.execute(
+            select(Event)
+            .where(Event.kind == str(EventKind.CONTEXT_INJECTION))
+            .order_by(Event.seq)
+        )
+        return list(rows.scalars().all())
+
+
+async def test_ensure_injected_writes_one_targeted_snapshot(env) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
+    await _item(
+        env, "v_pref", user_id="u_1", kind=VaultKind.PREFERENCE, name="addr",
+        tags=["global"],
+    )
+    bundle = await _ensure(env, "s_1", "a_1")
+    assert bundle is not None
+    events = await _injection_events(env)
+    assert len(events) == 1
+    event = events[0]
+    assert event.author_participant_id is None
+    assert event.target_participant_id == "p_a_1"
+    assert event.payload == {
+        "agent_id": "a_1",
+        "items": [
+            {
+                "item_id": "v_pref",
+                "kind": "preference",
+                "name": "addr",
+                "content": "content of addr",
+                "reason": "global",
+            }
+        ],
+    }
+
+
+async def test_ensure_injected_is_idempotent(env) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
+    await _item(
+        env, "v", user_id="u_1", kind=VaultKind.PREFERENCE, name="p", tags=["global"]
+    )
+    assert await _ensure(env, "s_1", "a_1") is not None
+    assert await _ensure(env, "s_1", "a_1") is None
+    assert len(await _injection_events(env)) == 1
+
+
+async def test_ensure_injected_one_event_per_agent(env) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}, "a_2": {}})
+    await _item(
+        env, "v", user_id="u_1", kind=VaultKind.PREFERENCE, name="p", tags=["global"]
+    )
+    await _ensure(env, "s_1", "a_1")
+    await _ensure(env, "s_1", "a_2")
+    events = await _injection_events(env)
+    assert sorted(e.target_participant_id for e in events) == ["p_a_1", "p_a_2"]
+
+
+async def test_empty_selection_still_anchors_an_event(env) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
+    bundle = await _ensure(env, "s_1", "a_1")
+    assert bundle is not None and bundle.items == []
+    events = await _injection_events(env)
+    assert len(events) == 1
+    assert events[0].payload["items"] == []
+    assert await _ensure(env, "s_1", "a_1") is None  # anchored even when empty
+
+
+async def test_ensure_injected_requires_participant(env) -> None:
+    import pytest
+
+    await _seed(
+        env, sessions={"s_1": "u_1"}, agents={"a_1": {}}, participants=False
+    )
+    _adapter, factory = env
+    async with factory() as s:
+        with pytest.raises(ParticipantNotFound):
+            await ContextInjector(s).ensure_injected(session_id="s_1", agent_id="a_1")
+
+
+async def test_rollback_leaves_no_event(env) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
+    await _item(
+        env, "v", user_id="u_1", kind=VaultKind.PREFERENCE, name="p", tags=["global"]
+    )
+    _adapter, factory = env
+    async with factory() as s:
+        await ContextInjector(s).ensure_injected(session_id="s_1", agent_id="a_1")
+        await s.rollback()
+    assert await _injection_events(env) == []
+
+
+async def test_injection_payload_validated_on_append(env) -> None:
+    import pytest
+    from pydantic import ValidationError
+
+    from octave.db.event_store import EventStore
+
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
+    _adapter, factory = env
+    async with factory() as s:
+        with pytest.raises(ValidationError):
+            await EventStore(s).append(
+                "s_1", EventKind.CONTEXT_INJECTION, payload={"items": []}
+            )  # agent_id missing

@@ -1,7 +1,12 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { createMemoryHistory, createRouter, RouterProvider } from '@tanstack/react-router';
 import { routeTree } from '../../src/router';
+import { fetchHealth } from '../../src/lib/api/client';
+
+// Full-tree renders mount Sidebar -> HealthStatus; keep tests hermetic.
+vi.mock('../../src/lib/api/client', () => ({ fetchHealth: vi.fn() }));
+vi.mocked(fetchHealth).mockResolvedValue({ status: 'ok' });
 
 function renderAt(path: string) {
   const router = createRouter({

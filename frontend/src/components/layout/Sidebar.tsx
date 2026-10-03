@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router';
 import type { CSSProperties } from 'react';
 import { colors } from '../../theme';
+import HealthStatus from '../HealthStatus';
 
 const NAV_ITEMS = [
   { to: '/sessions', label: 'Sessions', icon: '☰' },
@@ -36,7 +37,9 @@ export default function Sidebar() {
           </Link>
         ))}
       </nav>
-      <div style={styles.footer} />
+      <div style={styles.footer}>
+        <HealthStatus />
+      </div>
     </aside>
   );
 }

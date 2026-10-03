@@ -273,3 +273,29 @@ turns the composite-FK IntegrityError into `ParticipantNotFound`).
 `ensure_injected` is check-then-write (not concurrency-safe); fine under
 single-writer SQLite — a partial unique index or conditional insert is the
 fix if the composition root ever goes multi-process.
+
+### 2026-10-03 — UI Styling: Inline Styles with a Pseudo-Class CSS Exception
+
+**Context:** The app-shell spec (#6) success criterion says "no CSS files
+added" — component styling is inline `style` objects from `src/theme.ts`
+constants. But accessibility features (`:focus-visible` outline, skip-link
+show-on-focus) cannot be expressed via inline styles, which support no
+pseudo-classes.
+
+**Options Considered:**
+1. Strict no-CSS-file rule — drop the pseudo-class a11y features.
+2. Keep the small `src/index.css` additions scoped to pseudo-class rules only.
+3. Adopt a CSS-in-JS library for full styling flexibility.
+
+**Decision:** Option 2 — components keep inline styles; `src/index.css` may
+contain only rules that inline styles cannot express (pseudo-classes,
+`@keyframes`, global resets).
+
+**Rationale:** Accessibility (WCAG 2.4.1 bypass, focus visibility) is
+non-negotiable and technically impossible inline; a CSS-in-JS dependency is
+overkill while the styling surface is this small.
+
+**Consequences:** The "no CSS files" criterion is read as "no CSS files for
+layout/component styling". Future UI work puts pseudo-class/global rules in
+`index.css` and everything else inline. If the stylesheet outgrows a dozen
+rules, revisit CSS-in-JS or CSS modules.

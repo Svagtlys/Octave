@@ -47,4 +47,11 @@ describe('App routing', () => {
     expect(await screen.findByText('Octave')).toBeDefined();
     expect(screen.getByRole('complementary')).toBeDefined();
   });
+
+  it('provides a skip link targeting the main content', async () => {
+    renderAt('/sessions');
+    const skip = await screen.findByRole('link', { name: /skip to main content/i });
+    expect(skip.getAttribute('href')).toBe('#main-content');
+    expect(document.getElementById('main-content')).not.toBeNull();
+  });
 });

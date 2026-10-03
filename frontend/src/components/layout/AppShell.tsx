@@ -11,6 +11,9 @@ import TopBar from './TopBar';
 export default function AppShell() {
   return (
     <div style={styles.shell}>
+      <a className="skip-link" href="#main-content">
+        Skip to main content
+      </a>
       <Sidebar />
       <div style={styles.mainColumn}>
         <TopBar />

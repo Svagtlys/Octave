@@ -41,4 +41,10 @@ describe('App routing', () => {
     renderAt('/nope');
     expect(await screen.findByRole('heading', { level: 2, name: 'Not Found' })).toBeDefined();
   });
+
+  it('shows the brand and sidebar on every route', async () => {
+    renderAt('/agents');
+    expect(await screen.findByText('Octave')).toBeDefined();
+    expect(screen.getByRole('complementary')).toBeDefined();
+  });
 });

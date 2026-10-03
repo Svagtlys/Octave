@@ -1,6 +1,7 @@
 import { Outlet } from '@tanstack/react-router';
 import type { CSSProperties } from 'react';
 import { colors } from '../../theme';
+import Sidebar from './Sidebar';
 
 /**
  * Root layout for every view: sidebar + top bar + content area.
@@ -9,7 +10,8 @@ import { colors } from '../../theme';
 export default function AppShell() {
   return (
     <div style={styles.shell}>
-      <main style={styles.content}>
+      <Sidebar />
+      <main id="main-content" style={styles.content}>
         <Outlet />
       </main>
     </div>

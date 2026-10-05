@@ -21,6 +21,8 @@ from octave.auth.errors import (
     http_status_of,
 )
 from octave.auth.passwords import Argon2Hasher, DummyHasher, PasswordHasher
+from octave.auth.service import AuthService
+from octave.auth.store import AuthStore
 from octave.auth.tokens import generate_token, hash_token
 
 __all__ = [
@@ -28,7 +30,9 @@ __all__ = [
     "AlreadyBootstrapped",
     "Argon2Hasher",
     "AuthError",
+    "AuthService",
     "AuthSettings",
+    "AuthStore",
     "DummyHasher",
     "InvalidCredentials",
     "NotLastOwnerGuard",

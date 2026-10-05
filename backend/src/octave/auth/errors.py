@@ -12,6 +12,7 @@ __all__ = [
     "InvalidCredentials",
     "NotLastOwnerGuard",
     "SessionExpired",
+    "UserNotFound",
     "UsernameTaken",
     "http_status_of",
 ]
@@ -46,9 +47,17 @@ class AlreadyBootstrapped(AuthError):
     """First-run bootstrap ran once; the door is closed forever."""
 
 
+class UserNotFound(AuthError):
+    """Administration targeted an id that doesn't exist (404, not 401 —
+    the caller is already authenticated)."""
+
+
 def http_status_of(exc: AuthError) -> int:
-    """Map an auth error to its HTTP status (401 auth failures, 409 policy
-    conflicts). The single mapping point for middleware and tests."""
+    """Map an auth error to its HTTP status (401 auth failures, 404 admin
+    misses, 409 policy conflicts). Single mapping point for middleware,
+    routes and tests."""
     if isinstance(exc, (InvalidCredentials, AccountDisabled, SessionExpired)):
         return 401
+    if isinstance(exc, UserNotFound):
+        return 404
     return 409

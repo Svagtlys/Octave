@@ -17,6 +17,7 @@ from octave.auth.errors import (
     AlreadyBootstrapped,
     InvalidCredentials,
     NotLastOwnerGuard,
+    UserNotFound,
 )
 from octave.auth.passwords import PasswordHasher
 from octave.auth.store import AuthStore
@@ -152,7 +153,7 @@ class AuthService:
         """Role change with the lockout guard: never demote the last owner."""
         user = await self._store.get_user_by_id(user_id)
         if user is None:
-            raise InvalidCredentials  # no such account — nothing to change
+            raise UserNotFound(user_id)
         if (
             role != UserRole.OWNER
             and user.role == UserRole.OWNER
@@ -160,6 +161,15 @@ class AuthService:
         ):
             raise NotLastOwnerGuard
         await self._store.set_role(user, role)
+
+    async def admin_create_user(
+        self, *, username: str, password: str, display_name: str
+    ) -> User:
+        """Owner-initiated registration: provision_user seam + a password
+        credential set through the same hasher (never stored raw)."""
+        user = await self.provision_user(username=username, display_name=display_name)
+        await self._store.set_password_hash(user, self._hasher.hash(password))
+        return user
 
     async def deactivate_user(
         self, user_id: str, *, actor_id: str, force: bool = False
@@ -172,7 +182,7 @@ class AuthService:
         """
         user = await self._store.get_user_by_id(user_id)
         if user is None:
-            raise InvalidCredentials
+            raise UserNotFound(user_id)
         if not force:
             if user_id == actor_id:
                 raise NotLastOwnerGuard

@@ -103,6 +103,10 @@ class AuthStore:
         user.status = status
         await self._session.flush()
 
+    async def list_users(self) -> list[User]:
+        result = await self._session.execute(select(User).order_by(User.created_at))
+        return list(result.scalars().all())
+
     async def count_owners(self) -> int:
         result = await self._session.execute(
             select(func.count()).select_from(User).where(User.role == UserRole.OWNER)

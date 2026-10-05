@@ -26,6 +26,7 @@ dependencies = [
     # async engine + 2.0 typed ORM declarative base (spike: 2.0.52).
     "sqlalchemy[asyncio]>=2.0.52",
     "uvicorn[standard]>=0.34.0",
+    "argon2-cffi>=25.1.0",
 ]
 
 [project.optional-dependencies]
@@ -64,6 +65,9 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # mirror the agent plane's vocabulary with independent types, so N818's
 # Error-suffix would break the mirror the spec pins.
 "src/octave/context/errors.py" = ["N818"]
+# The multi-user auth spec pins these error names verbatim (domain-condition
+# names like InvalidCredentials/NotLastOwnerGuard, not Error-suffixed).
+"src/octave/auth/errors.py" = ["N818"]
 
 [tool.mypy]
 strict = true

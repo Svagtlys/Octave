@@ -38,7 +38,7 @@ async def test_savepoint_does_not_commit_on_choke_point_engine(
     survives a nested savepoint's release and an outer rollback."""
     factory = async_sessionmaker(choke_engine, expire_on_commit=False)
     async with factory() as session:
-        session.add(User(id="u_guard", display_name="Guard"))
+        session.add(User(id="u_guard", username="guard", display_name="Guard"))
         session.add(
             Session(id="s_guard", created_by_user_id="u_guard", status="active")
         )

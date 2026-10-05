@@ -134,3 +134,104 @@ def test_model_tag_migrates_to_tag_binding(tmp_path: Path) -> None:
         ).one()
     engine.dispose()
     assert json.loads(row.model_binding) == {"kind": "tag", "tag": "quick"}
+
+
+def _seed_pre_auth_db(url: str) -> None:
+    """Seed users/sessions/vault rows on the pre-auth schema (c9d4e2f6a1b8).
+
+    Two users share a display_name collision ("Alice") to exercise username
+    dedup; the third slugifies weirdly ("O'Brien!!" -> "o-brien"). u_old is the
+    oldest by created_at. u_ghost deliberately has NO participant row.
+    """
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO users (id, display_name, created_at) VALUES "
+                "('u_old', 'Alice', '2026-01-01 00:00:00'), "
+                "('u_new', 'Alice', '2026-02-01 00:00:00'), "
+                "('u_odd', 'O''Brien!!', '2026-03-01 00:00:00')"
+            )
+        )
+        # Participant for u_old and u_new only — u_ghost lacks one.
+        conn.execute(
+            text(
+                "INSERT INTO participants (id, user_id, agent_id, label) VALUES "
+                "('p_old', 'u_old', NULL, 'Alice'), "
+                "('p_new', 'u_new', NULL, 'Alice')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO sessions (id, created_by_user_id, parent_session_id, "
+                "status, title, created_at, updated_at, ended_at) VALUES "
+                "('s_1', 'u_old', NULL, 'active', NULL, "
+                "'2026-01-02 00:00:00', '2026-01-02 00:00:00', NULL)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO vault_items (id, user_id, kind, name, content, "
+                "metadata, embedding, embedding_model, embedding_dim, created_at, "
+                "updated_at) VALUES ('v_1', 'u_new', 'preference', 'Terse', 'x', "
+                "'{}', NULL, NULL, NULL, '2026-03-02 00:00:00', "
+                "'2026-03-02 00:00:00')"
+            )
+        )
+    engine.dispose()
+
+
+def test_pre_auth_db_backfill(tmp_path: Path) -> None:
+    """The spec's migration-safety test: upgrading a DB with existing users
+    backfills usernames (deduped), roles (oldest = owner), active status, an
+    unknowable password_hash, and missing participant rows — while every
+    pre-existing row survives."""
+    url = f"sqlite:///{tmp_path / 'preauth.db'}"
+    upgrade(url, revision="c9d4e2f6a1b8")  # pre-auth head
+    _seed_pre_auth_db(url)
+    upgrade(url)  # to head (auth schema)
+
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            users = {
+                row.id: row
+                for row in conn.execute(
+                    text("SELECT id, username, role, status, password_hash "
+                         "FROM users")
+                )
+            }
+            # All three users survive with backfilled columns.
+            assert set(users) == {"u_old", "u_new", "u_odd"}
+            # Oldest by created_at is the single owner; everyone else member.
+            roles = {u.id: u.role for u in users.values()}
+            assert roles == {"u_old": "owner", "u_new": "member", "u_odd": "member"}
+            # Everyone active.
+            assert {u.status for u in users.values()} == {"active"}
+            # password_hash set to a random unknowable value: non-null, and
+            # not a hash of anything guessable — just require non-empty text.
+            assert all(u.password_hash for u in users.values())
+            # Usernames: unique, slugified, collisions get .2 suffix.
+            usernames = sorted(u.username for u in users.values())
+            assert len(set(usernames)) == 3
+            assert "alice" in usernames
+            assert any(u.startswith("alice.") for u in usernames)
+            assert "o-brien" in usernames
+            # Missing participant row backfilled; existing ones untouched.
+            parts = {
+                row.user_id
+                for row in conn.execute(
+                    text("SELECT user_id FROM participants WHERE user_id IS NOT NULL")
+                )
+            }
+            assert parts == {"u_old", "u_new", "u_odd"}
+            # Pre-existing data survives.
+            sess = conn.execute(
+                text("SELECT COUNT(*) FROM sessions WHERE id = 's_1'")
+            ).scalar_one()
+            vault = conn.execute(
+                text("SELECT COUNT(*) FROM vault_items WHERE id = 'v_1'")
+            ).scalar_one()
+            assert sess == 1 and vault == 1
+    finally:
+        engine.dispose()

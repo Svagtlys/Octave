@@ -30,6 +30,8 @@ __all__ = [
     "SelectionReason",
     "TagModelBinding",
     "UserMessagePayload",
+    "UserRole",
+    "UserStatus",
     "VaultKind",
     "VectorHit",
 ]
@@ -70,6 +72,24 @@ class AgentStatus(StrEnum):
 
     ACTIVE = "active"
     PAUSED = "paused"
+
+
+class UserRole(StrEnum):
+    """Account privilege level. Stored verbatim in ``users.role``. Gates
+    account administration only (issue #122) — feature access is uniform for
+    all authenticated users."""
+
+    OWNER = "owner"
+    MEMBER = "member"
+
+
+class UserStatus(StrEnum):
+    """Account lifecycle. Stored verbatim in ``users.status``. Deactivation
+    preserves the user's sessions/vault (reversible); it deletes only the
+    user's ``auth_sessions`` rows for instant logout (issue #122)."""
+
+    ACTIVE = "active"
+    DEACTIVATED = "deactivated"
 
 
 class InstanceStatus(StrEnum):

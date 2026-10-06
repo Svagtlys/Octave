@@ -2,11 +2,36 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { createMemoryHistory, createRouter, RouterProvider } from '@tanstack/react-router';
 import { routeTree } from '../../src/router';
-import { fetchHealth } from '../../src/lib/api/client';
+import { fetchHealth, fetchAuthStatus, fetchMe } from '../../src/lib/api/client';
 
-// Full-tree renders mount Sidebar -> HealthStatus; keep tests hermetic.
-vi.mock('../../src/lib/api/client', () => ({ fetchHealth: vi.fn() }));
+// Full-tree renders mount Sidebar -> HealthStatus and the AuthProvider
+// probe; keep tests hermetic and default to an authed owner.
+const apiMocks = vi.hoisted(() => ({
+  ApiError: class ApiError extends Error {
+    constructor(
+      public status: number,
+      message: string
+    ) {
+      super(message);
+    }
+  },
+  fetchHealth: vi.fn(),
+  fetchAuthStatus: vi.fn(),
+  fetchMe: vi.fn(),
+  login: vi.fn(),
+  logout: vi.fn(),
+  bootstrap: vi.fn(),
+  setUnauthorizedHandler: vi.fn(),
+}));
+vi.mock('../../src/lib/api/client', () => apiMocks);
 vi.mocked(fetchHealth).mockResolvedValue({ status: 'ok' });
+vi.mocked(fetchAuthStatus).mockResolvedValue({ setup_required: false });
+vi.mocked(fetchMe).mockResolvedValue({
+  id: 'u1',
+  username: 'alice',
+  display_name: 'Alice',
+  role: 'owner',
+});
 
 function renderSidebarAt(path: string) {
   const router = createRouter({

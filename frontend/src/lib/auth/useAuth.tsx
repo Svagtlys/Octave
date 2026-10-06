@@ -22,7 +22,6 @@ import {
   type ReactNode,
 } from 'react';
 import {
-  ApiError,
   bootstrap as apiBootstrap,
   fetchAuthStatus,
   fetchMe,
@@ -39,11 +38,7 @@ export interface AuthContextValue {
   status: AuthStatus;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  bootstrap: (input: {
-    username: string;
-    password: string;
-    display_name: string;
-  }) => Promise<void>;
+  bootstrap: (input: { username: string; password: string; display_name: string }) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -55,26 +50,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const { setup_required } = await fetchAuthStatus();
-      if (cancelled) return;
-      if (setup_required) {
-        setStatus('setup_required');
-        return;
-      }
       try {
+        const { setup_required } = await fetchAuthStatus();
+        if (cancelled) return;
+        if (setup_required) {
+          setStatus('setup_required');
+          return;
+        }
         const me = await fetchMe();
         if (cancelled) return;
         setUser(me);
         setStatus('authed');
-      } catch (e) {
+      } catch {
         if (cancelled) return;
-        if (e instanceof ApiError && e.status === 401) {
-          setStatus('anonymous');
-        } else {
-          // Backend unreachable: treat as anonymous so the shell still
-          // renders (HealthStatus reports the outage).
-          setStatus('anonymous');
-        }
+        // 401 (no/expired cookie) and unreachable backend both resolve to
+        // anonymous; HealthStatus reports an actual outage in the shell.
+        setStatus('anonymous');
       }
     })();
     return () => {

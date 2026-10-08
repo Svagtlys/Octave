@@ -223,9 +223,10 @@ The auth layer (`octave.auth`) reads `OCTAVE_AUTH_*` variables via
 | `OCTAVE_AUTH_IDLE_TTL_DAYS` | `14` | Sessions expire after this much inactivity (rolling) |
 | `OCTAVE_AUTH_ABSOLUTE_TTL_DAYS` | `90` | Sessions expire this long after creation regardless of activity |
 
-Lost owner passwords are recovered out-of-band: `uv run octave-auth reset-password <username>`
-(requires direct DB access on the host). Verify any setup with
-`backend/tests/auth` (`uv run pytest tests/auth`).
+Lost owner passwords are recovered out-of-band:
+`uv run python -m octave.auth.cli reset-password <username> --password-file <path>`
+(requires direct DB access on the host; the new password is never passed via argv).
+Verify any setup with `uv run pytest tests/auth`.
 
 ### Frontend Environment
 

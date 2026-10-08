@@ -212,6 +212,21 @@ The MCP layer (`octave.mcp`) reads `OCTAVE_MCP_*` variables via
 | `OCTAVE_MCP_PROBE_TIMEOUT_SECONDS` | `5.0` | Budget for the manager's confirming ping after a request timeout |
 | `OCTAVE_MCP_STABILIZATION_SECONDS` | `60.0` | Time a connection must hold before the failure counter resets |
 
+#### Auth Policy
+
+The auth layer (`octave.auth`) reads `OCTAVE_AUTH_*` variables via
+`AuthSettings` in `backend/src/octave/auth/config.py`:
+
+| Variable | Default | Description |
+|---|---|---|
+| `OCTAVE_AUTH_COOKIE_SECURE` | `false` | Set `true` when the backend is served over HTTPS so the session cookie carries `Secure` |
+| `OCTAVE_AUTH_IDLE_TTL_DAYS` | `14` | Sessions expire after this much inactivity (rolling) |
+| `OCTAVE_AUTH_ABSOLUTE_TTL_DAYS` | `90` | Sessions expire this long after creation regardless of activity |
+
+Lost owner passwords are recovered out-of-band: `uv run octave-auth reset-password <username>`
+(requires direct DB access on the host). Verify any setup with
+`backend/tests/auth` (`uv run pytest tests/auth`).
+
 ### Frontend Environment
 
 The frontend uses Vite's environment variable convention. Create `frontend/.env` for local development:

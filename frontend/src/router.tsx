@@ -2,11 +2,16 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  Outlet,
   redirect,
   useRouterState,
 } from '@tanstack/react-router';
 import AppShell from './components/layout/AppShell';
+import RequireAuth from './components/auth/RequireAuth';
+import { AuthProvider } from './lib/auth/useAuth';
 import PlaceholderView from './views/PlaceholderView';
+import LoginView from './views/LoginView';
+import SetupView from './views/SetupView';
 
 function NotFoundView() {
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -18,15 +23,55 @@ function NotFoundView() {
   );
 }
 
+/**
+ * Root: mounts AuthProvider so every route (including /login and /setup)
+ * can read auth state. App-owned auth lives here, not in main.tsx, so
+ * test routers built from routeTree get it too.
+ */
+function RootView() {
+  return (
+    <AuthProvider>
+      <Outlet />
+    </AuthProvider>
+  );
+}
+
 const rootRoute = createRootRoute({
-  component: AppShell,
-  // Route-level so every router instance built from routeTree (app + tests)
-  // renders the custom not-found view.
-  notFoundComponent: NotFoundView,
+  component: RootView,
+  // Unknown paths render inside the shell (matches previous behavior), but
+  // only once RequireAuth has passed. The root's notFoundComponent renders
+  // through the root Outlet, so we re-mount the shell around it explicitly.
+  notFoundComponent: () => (
+    <RequireAuth>
+      <AppShell>
+        <NotFoundView />
+      </AppShell>
+    </RequireAuth>
+  ),
+});
+
+/**
+ * Pathless layout: every app view sits behind RequireAuth + the shell.
+ * Anonymous -> /login, first-run -> /setup (issue #122).
+ */
+const protectedRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  id: 'protected',
+  component: () => (
+    <RequireAuth>
+      <AppShell />
+    </RequireAuth>
+  ),
+});
+
+/** Pathless layout for the auth screens (rendered without the shell). */
+const publicRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  id: 'public',
 });
 
 const indexRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => protectedRoute,
   path: '/',
   beforeLoad: () => {
     throw redirect({ to: '/sessions' });
@@ -34,14 +79,14 @@ const indexRoute = createRoute({
 });
 
 const sessionsRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => protectedRoute,
   path: '/sessions',
   staticData: { title: 'Sessions' },
   component: () => <PlaceholderView title="Sessions" note="Chat interface lands in issue #7." />,
 });
 
 const vaultRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => protectedRoute,
   path: '/vault',
   staticData: { title: 'Vault' },
   component: () => (
@@ -53,7 +98,7 @@ const vaultRoute = createRoute({
 });
 
 const mcpRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => protectedRoute,
   path: '/mcp',
   staticData: { title: 'MCP Servers' },
   component: () => (
@@ -65,7 +110,7 @@ const mcpRoute = createRoute({
 });
 
 const agentsRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => protectedRoute,
   path: '/agents',
   staticData: { title: 'Agents' },
   component: () => (
@@ -77,7 +122,7 @@ const agentsRoute = createRoute({
 });
 
 const settingsRoute = createRoute({
-  getParentRoute: () => rootRoute,
+  getParentRoute: () => protectedRoute,
   path: '/settings',
   staticData: { title: 'Settings' },
   component: () => (
@@ -88,13 +133,28 @@ const settingsRoute = createRoute({
   ),
 });
 
+const loginRoute = createRoute({
+  getParentRoute: () => publicRoute,
+  path: '/login',
+  component: LoginView,
+});
+
+const setupRoute = createRoute({
+  getParentRoute: () => publicRoute,
+  path: '/setup',
+  component: SetupView,
+});
+
 export const routeTree = rootRoute.addChildren([
-  indexRoute,
-  sessionsRoute,
-  vaultRoute,
-  mcpRoute,
-  agentsRoute,
-  settingsRoute,
+  protectedRoute.addChildren([
+    indexRoute,
+    sessionsRoute,
+    vaultRoute,
+    mcpRoute,
+    agentsRoute,
+    settingsRoute,
+  ]),
+  publicRoute.addChildren([loginRoute, setupRoute]),
 ]);
 
 export const router = createRouter({

@@ -26,8 +26,8 @@ Env = tuple[SqliteVecAdapter, async_sessionmaker]
 async def _seed(env: Env) -> None:
     _, factory = env
     async with factory() as s:
-        s.add(User(id="u_1", display_name="Alice"))
-        s.add(User(id="u_2", display_name="Bob"))
+        s.add(User(id="u_1", username="alice", display_name="Alice"))
+        s.add(User(id="u_2", username="bob", display_name="Bob"))
         s.add(
             Agent(id="a_1", name="Echo", model_binding={"kind": "tag", "tag": "quick"})
         )

@@ -115,7 +115,7 @@ async def test_matches_router_turn_records(session_factory) -> None:
     )
 
     async with session_factory() as session:
-        session.add(User(id="u_1", display_name="Alice"))
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
         session.add(
             Agent(id="a_1", name="Echo", model_binding={"kind": "tag", "tag": "quick"})
         )

@@ -28,7 +28,7 @@ async def _seed_defs(
 ) -> None:
     """One user; agents a_1/a_2 active + a_3 paused; sessions s_1/s_2."""
     async with session_factory() as session:
-        session.add(User(id="u_1", display_name="Alice"))
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
         session.add(
             Agent(
                 id="a_1",

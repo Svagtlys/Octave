@@ -51,7 +51,7 @@ async def _seed(
     _adapter, factory = env
     async with factory() as s:
         for uid in users:
-            s.add(User(id=uid, display_name=uid))
+            s.add(User(id=uid, username=uid, display_name=uid))
         for agent_id, assignments in agents.items():
             s.add(Agent(id=agent_id, name=agent_id, assignments=dict(assignments)))
             if participants:

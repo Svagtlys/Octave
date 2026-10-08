@@ -17,7 +17,7 @@ from octave.db.types import EventKind
 async def _seed(session_factory: async_sessionmaker[AsyncSession]) -> str:
     """User u_1, sessions s_1/s_2, and a user participant (author FK)."""
     async with session_factory() as session:
-        session.add(User(id="u_1", display_name="Alice"))
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
         session.add(Session(id="s_1", created_by_user_id="u_1", status="active"))
         session.add(Session(id="s_2", created_by_user_id="u_1", status="active"))
         participant = Participant(id="p_u1", user_id="u_1", label="Alice")

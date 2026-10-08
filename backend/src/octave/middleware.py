@@ -10,6 +10,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message
 
+from octave.auth.errors import AuthError, http_status_of
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,6 +64,16 @@ class LogRequestMiddleware:
 
 
 def add_error_handlers(app: FastAPI) -> None:
+    @app.exception_handler(AuthError)
+    async def auth_error(request: Request, exc: AuthError) -> JSONResponse:
+        """Single map point: auth-plane failures -> HTTP JSON (401/404/409
+        via ``http_status_of``). Routes raise domain errors, not
+        HTTPExceptions, so the service stays HTTP-agnostic."""
+        return JSONResponse(
+            status_code=http_status_of(exc),
+            content={"error": type(exc).__name__, "detail": str(exc) or None},
+        )
+
     @app.exception_handler(404)
     async def not_found(request: Request, exc: Exception) -> JSONResponse:
         return JSONResponse(

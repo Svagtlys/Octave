@@ -32,8 +32,18 @@ __all__ = ["AuthService", "ResolvedSession"]
 ResolvedSession = tuple[User, AuthSession]
 
 # Verify-on-unknown runs against this decoy so a missing user costs the same
-# work as a wrong password — login timing must not leak existence.
-_DECOY_HASH = "argon2-decoy-hash-for-timing-equalization"
+# work as a wrong password — login timing must not leak existence. It MUST be
+# a genuine argon2 encoding: a garbage string raises InvalidHashError
+# instantly, making unknown usernames measurably faster than wrong
+# passwords and re-opening the exact leak the decoy closes. It hashes a
+# randomly generated secret that is not stored anywhere, so it can never
+# match a real login. Generated once via
+# argon2.PasswordHasher().hash(secrets.token_urlsafe());
+# test_decoy_hash_is_genuine_argon2 pins the format.
+_DECOY_HASH = (
+    "$argon2id$v=19$m=65536,t=3,p=4$AblbLndk5gqcuYcVVXqXYQ"
+    "$C1Gk8niMiAmSyDOBabkrDiWEqVcmJdemzAONloVD41I"
+)
 
 
 class AuthService:

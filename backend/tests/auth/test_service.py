@@ -131,6 +131,54 @@ async def test_login_unknown_username_same_error_profile(
             await _service(session).login("nobody", "pw")
 
 
+def test_decoy_hash_is_genuine_argon2() -> None:
+    """The timing-equalization decoy must be a real argon2 encoding — a
+    garbage string fails instantly (InvalidHashError) and re-opens the
+    username-existence leak the decoy exists to close."""
+    from octave.auth.passwords import Argon2Hasher
+    from octave.auth.service import _DECOY_HASH
+
+    assert _DECOY_HASH.startswith("$argon2")
+    hasher = Argon2Hasher()
+    assert hasher.verify(_DECOY_HASH, "not-the-decoy-password") is False
+    assert hasher.needs_rehash(_DECOY_HASH) is False
+
+
+async def test_login_unknown_username_costs_full_verify(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Real Argon2Hasher (the only suite paying real cost): an unknown
+    username must burn the same ~full-verify work as a wrong password."""
+    import time
+
+    from octave.auth.passwords import Argon2Hasher
+
+    def _real_service(session: AsyncSession) -> AuthService:
+        return AuthService(
+            store=AuthStore(session),
+            hasher=Argon2Hasher(),
+            settings=AuthSettings(),
+        )
+
+    async with session_factory() as session:
+        await _real_service(session).bootstrap_owner("alice", "right password", "Alice")
+        await session.commit()
+
+    async def _timed_login(username: str) -> float:
+        async with session_factory() as session:
+            start = time.perf_counter()
+            with pytest.raises(InvalidCredentials):
+                await _real_service(session).login(username, "wrong password")
+            await session.rollback()
+            return time.perf_counter() - start
+
+    wrong = min([await _timed_login("alice") for _ in range(3)])
+    unknown = min([await _timed_login("nobody") for _ in range(3)])
+    # Same order of magnitude: unknown must not be an order of magnitude
+    # faster than wrong-password (the leak the decoy exists to close).
+    assert 0.25 <= unknown / wrong <= 4.0
+
+
 async def test_login_null_password_hash_fails_closed(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

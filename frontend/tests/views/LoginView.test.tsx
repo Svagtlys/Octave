@@ -72,6 +72,26 @@ describe('LoginView', () => {
     expect(alert.textContent).toContain('Invalid username or password');
   });
 
+  it('shows the same field error when login returns 422 (body validation)', async () => {
+    // Too-short username/password fail Pydantic validation before any DB
+    // lookup; the user must not see "Could not reach the server".
+    vi.mocked(fetchMe).mockRejectedValue(new apiMocks.ApiError(401, 'nope'));
+    vi.mocked(login).mockRejectedValue(new apiMocks.ApiError(422, 'validation'));
+    renderAt('/login');
+    await screen.findByRole('heading', { name: 'Sign in' });
+
+    fireEvent.change(screen.getByLabelText('Username'), {
+      target: { value: 'a' },
+    });
+    fireEvent.change(screen.getByLabelText('Password'), {
+      target: { value: '' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('Invalid username or password');
+  });
+
   it('redirects to /sessions on successful login', async () => {
     vi.mocked(fetchMe).mockRejectedValue(new apiMocks.ApiError(401, 'nope'));
     vi.mocked(login).mockResolvedValue(alice);

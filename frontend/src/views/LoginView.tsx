@@ -32,7 +32,10 @@ export default function LoginView() {
       navigate({ to: '/sessions' });
     } catch (e) {
       setError(
-        e instanceof ApiError && e.status === 401
+        // 401 (bad credentials) and 422 (request-body validation, checked
+        // before any DB lookup — cannot leak account state) both mean the
+        // entered pair is simply invalid.
+        e instanceof ApiError && (e.status === 401 || e.status === 422)
           ? 'Invalid username or password.'
           : 'Could not reach the server. Try again.'
       );

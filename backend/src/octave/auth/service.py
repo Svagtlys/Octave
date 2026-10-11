@@ -97,7 +97,13 @@ class AuthService:
         self, username: str, password: str, display_name: str
     ) -> str:
         """First-run: create the single owner + session. Closes forever on
-        success — there is no second bootstrap, ever."""
+        success — there is no second bootstrap, ever.
+
+        The user_exists check races only against another bootstrap. On
+        SQLite (the only supported adapter) writers are serialized, so the
+        check-and-insert cannot interleave; on a hypothetical concurrent
+        writer backend the username UNIQUE constraint stays the backstop.
+        """
         if await self._store.user_exists():
             raise AlreadyBootstrapped
         user = await self.provision_user(
@@ -180,6 +186,15 @@ class AuthService:
         user = await self.provision_user(username=username, display_name=display_name)
         await self._store.set_password_hash(user, self._hasher.hash(password))
         return user
+
+    async def reactivate_user(self, user_id: str) -> None:
+        """Restore a deactivated account. Data was deliberately preserved at
+        deactivation (spec) so this is a status flip; no sessions are
+        recreated — the user logs in again."""
+        user = await self._store.get_user_by_id(user_id)
+        if user is None:
+            raise UserNotFound(user_id)
+        await self._store.set_status(user, UserStatus.ACTIVE.value)
 
     async def deactivate_user(
         self, user_id: str, *, actor_id: str, force: bool = False

@@ -269,6 +269,44 @@ async def test_patch_unknown_user_404(app_and_factory) -> None:
         assert response.status_code == 404
 
 
+async def test_patch_reactivates_deactivated_user(app_and_factory) -> None:
+    """Spec preserves deactivated accounts for reactivation; PATCH
+    status=active must actually restore login (not silently no-op)."""
+    app, factory = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)  # owner alice
+        created = await client.post(
+            "/api/auth/users",
+            json={"username": "bob", "password": "pw", "display_name": "Bob"},
+        )
+        bob_id = created.json()["id"]
+        deactivate = await client.patch(
+            f"/api/auth/users/{bob_id}", json={"status": "deactivated"}
+        )
+        assert deactivate.status_code == 200
+
+        member = await _client(app)
+        refused = await member.post(
+            "/api/auth/login", json={"username": "bob", "password": "pw"}
+        )
+        # Deactivated collapses into the generic 401 (never reveal state).
+        assert refused.status_code == 401
+
+        reactivate = await client.patch(
+            f"/api/auth/users/{bob_id}", json={"status": "active"}
+        )
+        assert reactivate.status_code == 200
+        assert reactivate.json()["username"] == "bob"
+
+        logged_in = await member.post(
+            "/api/auth/login", json={"username": "bob", "password": "pw"}
+        )
+        assert logged_in.status_code == 200
+    async with factory() as session:
+        user = await session.get(User, bob_id)
+        assert user is not None and user.status == "active"
+
+
 # -- guard: no route reachable anonymously --------------------------------------
 
 # Spec (Testing): every route outside an *explicit* public allowlist must

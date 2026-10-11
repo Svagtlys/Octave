@@ -150,7 +150,9 @@ class AuthStore:
         self, token_hash: str, now: datetime
     ) -> AuthSession | None:
         """Valid rows only: an expired row is deleted on read (lazy sweep)
-        and reported as absent."""
+        and reported as absent. The delete only persists if the caller's
+        route commits — read-only routes leave the row for login's
+        ``purge_expired``; harmless either way."""
         row = await self._session.get(AuthSession, token_hash)
         if row is None:
             return None

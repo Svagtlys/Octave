@@ -219,11 +219,14 @@ async def patch_user(
     service: AuthService = Depends(get_auth_service),
 ) -> dict[str, str]:
     """Role/status change with last-owner + self-deactivation guards
-    (service-side; guard violations raise NotLastOwnerGuard -> 409)."""
+    (service-side; guard violations raise NotLastOwnerGuard -> 409).
+    ``status: active`` reactivates a previously deactivated account."""
     if body.role is not None:
         await service.set_role(user_id, body.role.value, actor_id=actor.id)
     if body.status == UserStatus.DEACTIVATED:
         await service.deactivate_user(user_id, actor_id=actor.id)
+    elif body.status == UserStatus.ACTIVE:
+        await service.reactivate_user(user_id)
     await session.commit()
     user = await AuthStore(session).get_user_by_id(user_id)
     assert user is not None

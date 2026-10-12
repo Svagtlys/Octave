@@ -39,8 +39,10 @@ export default function SetupView() {
       setError(
         e instanceof ApiError && e.status === 409
           ? 'Setup has already been completed. Sign in instead.'
-          : e instanceof ApiError && e.status === 400
-            ? 'Username or password does not meet the requirements.'
+          : // 422 = body validation (username pattern/length) — same class
+            // as the old 400 mapping; both mean "fix the form".
+            e instanceof ApiError && (e.status === 400 || e.status === 422)
+            ? 'Username must be 2-32 characters: lowercase letters, numbers, dots, dashes, underscores.'
             : 'Could not reach the server. Try again.'
       );
     } finally {
@@ -51,7 +53,10 @@ export default function SetupView() {
   return (
     <div style={styles.card}>
       <h2 style={styles.heading}>Welcome to Octave</h2>
-      <p style={styles.note}>Create the first account. It becomes the owner.</p>
+      <p style={styles.note}>
+        Create the first account. It becomes the owner. Username: 2-32
+        characters — lowercase letters, numbers, dots, dashes, underscores.
+      </p>
       <form onSubmit={onSubmit} style={styles.form}>
         <label style={styles.label}>
           Username

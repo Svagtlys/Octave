@@ -94,6 +94,28 @@ describe('SetupView', () => {
     });
   });
 
+  it('shows the validation error when bootstrap returns 422', async () => {
+    // Invalid username (e.g. uppercase or too short) fails body validation
+    // before any DB work; the user must see the requirement, not a server
+    // outage.
+    vi.mocked(fetchAuthStatus).mockResolvedValue({ setup_required: true });
+    vi.mocked(bootstrap).mockRejectedValue(new apiMocks.ApiError(422, 'validation'));
+    renderAt('/setup');
+    await screen.findByRole('heading', { name: 'Welcome to Octave' });
+
+    fireEvent.change(screen.getByLabelText('Username'), {
+      target: { value: 'A' },
+    });
+    fireEvent.change(screen.getByLabelText('Password'), {
+      target: { value: 'pw123456' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /create owner/i }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('lowercase letters, numbers');
+    expect(alert.textContent).not.toContain('Could not reach');
+  });
+
   it('shows an inline error when a second bootstrap races to 409', async () => {
     vi.mocked(fetchAuthStatus).mockResolvedValue({ setup_required: true });
     vi.mocked(bootstrap).mockRejectedValue(new apiMocks.ApiError(409, 'already'));

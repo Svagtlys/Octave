@@ -18,16 +18,29 @@ __all__ = ["Agent", "Participant", "User"]
 
 
 class User(Base):
-    """The human who owns Octave's data. Local-first: exactly one row today.
+    """A human account: ownership anchor plus login credentials (issue #122).
 
     Deliberately minimal — preferences are ``vault_items(kind=preference)``
-    per the vault-separation ADR. This is an ownership anchor, not a profile.
+    per the vault-separation ADR. ``username`` is immutable in 1.0 and is NOT
+    the OIDC identity (see auth design spec). ``password_hash`` NULL means
+    "no password credential" (the OIDC-provisioned shape); login on a
+    NULL-hash account fails closed. ``role``/``status`` are TEXT +
+    app-validated enums (``octave.db.types.UserRole``/``UserStatus``).
     """
 
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
+    username: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    """Lowercased ``[a-z0-9._-]{2,32}``; app-validated, immutable in 1.0."""
+    password_hash: Mapped[str | None] = mapped_column(Text)
+    """argon2id encoded hash; NULL = no password credential (OIDC shape)."""
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False, default="member")
+    """``UserRole`` (app-validated): ``owner | member``."""
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="active")
+    """``UserStatus`` (app-validated): ``active | deactivated``."""
+    last_login_at: Mapped[datetime | None] = mapped_column(UTCDateTime)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=utcnow, nullable=False
     )

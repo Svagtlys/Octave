@@ -20,6 +20,7 @@ import sqlite_vec
 from sqlalchemy import event, make_url
 from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool, StaticPool
 
 __all__ = ["attach_transaction_control", "create_sqlite_engine", "make_async_creator"]
 
@@ -58,8 +59,20 @@ def create_sqlite_engine(url: URL | str) -> AsyncEngine:
     """
     if isinstance(url, str):
         url = make_url(url)
+    in_memory = url.database is None or url.database == ":memory:"
+    # The engine URL is always the bare ``sqlite+aiosqlite://`` scheme (the
+    # path lives in the async_creator), which SQLAlchemy's pool heuristic
+    # reads as in-memory -> StaticPool: one DBAPI connection shared by every
+    # session. For file-backed databases that is a bug, not a feature — two
+    # concurrent requests collide in the explicit-BEGIN listener ("cannot
+    # start a transaction within a transaction"). Give file DBs one
+    # connection per checkout (NullPool; WAL + busy_timeout cover
+    # contention) and keep StaticPool only for true in-memory URLs, where a
+    # fresh connection would otherwise be a fresh, empty database.
     engine = create_async_engine(
-        "sqlite+aiosqlite://", async_creator=make_async_creator(url)
+        "sqlite+aiosqlite://",
+        async_creator=make_async_creator(url),
+        poolclass=StaticPool if in_memory else NullPool,
     )
     attach_transaction_control(engine)
     return engine

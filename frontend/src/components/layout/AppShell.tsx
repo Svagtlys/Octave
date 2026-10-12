@@ -1,14 +1,15 @@
 import { Outlet } from '@tanstack/react-router';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { colors } from '../../theme';
 import Sidebar from './Sidebar';
 import TopBar from './TopBar';
 
 /**
  * Root layout for every view: sidebar + top bar + content area.
- * Route views render inside <main> via <Outlet/>.
+ * Route views render inside <main> via <Outlet/>; callers that replace the
+ * outlet (the not-found route) can pass explicit children instead.
  */
-export default function AppShell() {
+export default function AppShell({ children }: { children?: ReactNode }) {
   return (
     <div style={styles.shell}>
       <a className="skip-link" href="#main-content">
@@ -18,7 +19,7 @@ export default function AppShell() {
       <div style={styles.mainColumn}>
         <TopBar />
         <main id="main-content" style={styles.content}>
-          <Outlet />
+          {children ?? <Outlet />}
         </main>
       </div>
     </div>

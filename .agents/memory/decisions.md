@@ -62,6 +62,8 @@ Each decision follows this structure:
 - Backup responsibility falls on the user
 - Must run local infrastructure (LLM, vector DB, etc.)
 
+**Amendment (2026-10-05):** Multi-user *login* is compatible with this ADR — accounts live in the instance's own database and all data remains on-prem; no external identity provider is required (issue #122, spec `2026-10-04-multi-user-auth-design.md`). Multi-user *sync* across instances remains out of scope.
+
 ### 2026-06-27 — Context Vault Separation from Knowledge Base
 
 **Context:** The KB contains all user knowledge, but not all of it should be injected into LLM context.

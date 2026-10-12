@@ -9,6 +9,7 @@ reintroduce the RELEASE-SAVEPOINT-commits bug. Guards:
 """
 
 import ast
+import asyncio
 from pathlib import Path
 
 import pytest_asyncio
@@ -38,7 +39,7 @@ async def test_savepoint_does_not_commit_on_choke_point_engine(
     survives a nested savepoint's release and an outer rollback."""
     factory = async_sessionmaker(choke_engine, expire_on_commit=False)
     async with factory() as session:
-        session.add(User(id="u_guard", display_name="Guard"))
+        session.add(User(id="u_guard", username="guard", display_name="Guard"))
         session.add(
             Session(id="s_guard", created_by_user_id="u_guard", status="active")
         )
@@ -86,3 +87,32 @@ def test_src_creates_sqlite_engines_only_via_choke_point() -> None:
         "SQLite engines must be created via octave.db._bootstrap."
         f"create_sqlite_engine: {offenders}"
     )
+
+
+async def test_concurrent_sessions_do_not_share_transactions(
+    tmp_path: Path,
+) -> None:
+    """Concurrent requests must not collide on one DBAPI connection.
+
+    The engine's real URL is the bare ``sqlite+aiosqlite://`` scheme (the
+    path lives in the async_creator), so SQLAlchemy's pool heuristic reads
+    it as an in-memory database and hands back StaticPool — every session
+    then shares one connection, and the explicit-BEGIN listener fires
+    ``BEGIN`` inside a peer's open transaction ("cannot start a
+    transaction within a transaction"). That killed parallel page-load
+    requests against the live server; each checkout needs its own
+    connection (WAL + busy_timeout cover cross-connection contention).
+    """
+    eng = create_sqlite_engine(f"sqlite:///{tmp_path / 'conc.db'}")
+    async with eng.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(eng, expire_on_commit=False)
+
+    async def one() -> int:
+        async with factory() as session:
+            result = await session.execute(select(func.count()).select_from(User))
+            return result.scalar_one()
+
+    counts = await asyncio.gather(*(one() for _ in range(6)))
+    assert counts == [0] * 6
+    await eng.dispose()

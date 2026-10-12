@@ -25,7 +25,7 @@ def _probe_app() -> FastAPI:
     async def _probe_write(
         session: AsyncSession = Depends(get_db_session),
     ) -> dict[str, str]:
-        session.add(User(id="u_probe", display_name="Probe"))
+        session.add(User(id="u_probe", username="probe", display_name="Probe"))
         await session.commit()
         return {"id": "u_probe"}
 

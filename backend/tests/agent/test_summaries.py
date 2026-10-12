@@ -119,7 +119,7 @@ async def env(
         await adapter.ensure_vector_store(conn)
     factory = adapter.make_session_factory(engine)
     async with factory() as session:
-        session.add(User(id="u_1", display_name="Alice"))
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
         session.add(Agent(id="a_1", name="Echo", model_binding=_TAG_BINDING))
         session.add(Session(id="s_1", created_by_user_id="u_1", status="active"))
         session.add(Participant(id="p_u1", user_id="u_1", label="Alice"))

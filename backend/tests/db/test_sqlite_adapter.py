@@ -99,7 +99,7 @@ async def test_make_session_factory_keeps_rows_readable(
         factory = adapter.make_session_factory(engine)
         assert factory.kw["expire_on_commit"] is False
         async with factory() as session:
-            created = User(id="u_1", display_name="Alice")
+            created = User(id="u_1", username="alice", display_name="Alice")
             session.add(created)
             await session.commit()
             # expire_on_commit=False: the instance is still usable here...
@@ -123,7 +123,7 @@ async def test_search_similar_ranks_nearest_first(tmp_path: Path) -> None:
             await adapter.ensure_vector_store(conn)
         factory = adapter.make_session_factory(engine)
         async with factory() as session:
-            session.add(User(id="u_1", display_name="Alice"))
+            session.add(User(id="u_1", username="alice", display_name="Alice"))
             await session.commit()
         vectors = {
             "v_east": [1.0, 0.0, 0.0],

@@ -30,6 +30,8 @@ The frontend provides five view areas mounted on a shared layout shell. All view
 
 The backend exposes REST endpoints and WebSocket connections. It is structured around four pluggable subsystems.
 
+**Implemented — multi-user auth (issue #122):** the `octave.auth` package owns identities and sessions: argon2id password hashing (`passwords`), opaque session tokens stored hashed (`tokens`), `AuthStore`/`AuthService` (bootstrap/login/logout/deactivate, idle + absolute TTLs), and FastAPI dependencies (`deps`) that guard every non-public route with 401/403. Login is local-only by design — accounts live in the instance's own database (see the 2026-10-05 ADR amendment: local-first permits multi-user *login*, not *sync*). The session cookie is `HttpOnly`/`SameSite=Lax`; the WebSocket handshake authenticates through the same cookie and closes unauthenticated connections pre-accept with `4401` (missing/expired session) or `4403` (deactivated user). A first-run instance exposes exactly one open mutation, `POST /auth/bootstrap`, which 409s once an owner exists; a lost owner password is recovered via the `octave-auth reset-password` CLI. Follow-ups (OIDC, WS revalidation, CSRF guard, rate limiting) are tracked as issues #126–#129.
+
 ---
 
 ### Inference Engine Connector

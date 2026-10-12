@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { get, ApiError } from './client';
+import { get, post, login, setUnauthorizedHandler, ApiError } from './client';
 
 // Mock global fetch
 const mockFetch = vi.fn();
@@ -65,5 +65,48 @@ describe('API client', () => {
       'http://localhost:8000/api/health',
       expect.objectContaining({ method: 'GET' })
     );
+  });
+
+  it('sends credentials: include on every request', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      text: async () => '',
+    });
+
+    await get('/api/anything');
+    await post('/api/anything', {});
+    for (const call of mockFetch.mock.calls) {
+      expect(call[1]).toEqual(expect.objectContaining({ credentials: 'include' }));
+    }
+  });
+
+  it('triggers onUnauthorized on 401 for ordinary paths', async () => {
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => '',
+    });
+
+    await expect(get('/api/sessions')).rejects.toBeInstanceOf(ApiError);
+    expect(handler).toHaveBeenCalledTimes(1);
+    setUnauthorizedHandler(null);
+  });
+
+  it('does not trigger onUnauthorized for auth endpoints (login 401 is form feedback)', async () => {
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      text: async () => 'Invalid credentials',
+    });
+
+    await expect(login('alice', 'wrong')).rejects.toBeInstanceOf(ApiError);
+    expect(handler).not.toHaveBeenCalled();
+    setUnauthorizedHandler(null);
   });
 });

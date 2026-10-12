@@ -24,7 +24,7 @@ _TAG_BINDING = {"kind": "tag", "tag": "quick"}
 
 async def _seed(session_factory: async_sessionmaker[AsyncSession]) -> None:
     async with session_factory() as session:
-        session.add(User(id="u_1", display_name="Alice"))
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
         session.add(Agent(id="a_1", name="Echo", model_binding=_TAG_BINDING))
         session.add(Agent(id="a_2", name="Second", model_binding=_TAG_BINDING))
         session.add(Session(id="s_1", created_by_user_id="u_1", status="active"))

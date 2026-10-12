@@ -22,7 +22,7 @@ async def test_identity_round_trip(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_factory() as session:
-        session.add(User(id="u_1", display_name="Alice"))
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
         session.add(
             Agent(
                 id="a_1", name="Octave", model_binding={"kind": "tag", "tag": "quick"}
@@ -60,7 +60,7 @@ async def test_participant_rejects_both_identities(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_factory() as session:
-        session.add(User(id="u_1", display_name="Alice"))
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
         session.add(Agent(id="a_1", name="Octave"))
         session.add(
             Participant(id="p_bad", user_id="u_1", agent_id="a_1", label="both")
@@ -73,7 +73,7 @@ async def test_participant_unique_per_user(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_factory() as session:
-        session.add(User(id="u_1", display_name="Alice"))
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
         session.add(Participant(id="p_1", user_id="u_1", label="Alice"))
         session.add(Participant(id="p_2", user_id="u_1", label="Alice again"))
         with pytest.raises(IntegrityError):
@@ -92,7 +92,7 @@ async def test_participant_fk_to_user_enforced(
 async def _seed_chat(session_factory: async_sessionmaker[AsyncSession]) -> None:
     """One user + one agent, both members of session ``s_1``."""
     async with session_factory() as session:
-        session.add(User(id="u_1", display_name="Alice"))
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
         session.add(Agent(id="a_1", name="Octave"))
         session.add(Participant(id="p_user", user_id="u_1", label="Alice"))
         session.add(Participant(id="p_agent", agent_id="a_1", label="Octave"))
@@ -193,7 +193,7 @@ async def test_duplicate_membership_rejected(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_factory() as session:
-        session.add(User(id="u_1", display_name="Alice"))
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
         session.add(Participant(id="p_user", user_id="u_1", label="Alice"))
         session.add(Session(id="s_1", created_by_user_id="u_1"))
         session.add(SessionParticipant(session_id="s_1", participant_id="p_user"))
@@ -256,7 +256,7 @@ async def test_session_requires_existing_owner(
 
 async def _seed_user(session_factory: async_sessionmaker[AsyncSession]) -> None:
     async with session_factory() as session:
-        session.add(User(id="u_1", display_name="Alice"))
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
         await session.commit()
 
 
@@ -393,7 +393,7 @@ async def _seed_agent_session(
 ) -> None:
     """One user, one agent, one session — no membership yet."""
     async with session_factory() as session:
-        session.add(User(id="u_1", display_name="Alice"))
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
         session.add(Agent(id="a_1", name="Octave"))
         session.add(Session(id="s_1", created_by_user_id="u_1"))
         await session.commit()
@@ -448,3 +448,65 @@ async def test_session_delete_cascades_instances(
         await session.commit()
     async with session_factory() as session:
         assert await session.get(AgentInstance, "i_1") is None
+
+
+# --- auth schema (issue #122) -------------------------------------------------
+
+
+async def test_user_credential_defaults(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(
+            User(id="u_1", username="alice", display_name="Alice")
+        )
+        await session.commit()
+        loaded = await session.get(User, "u_1")
+        assert loaded is not None
+        assert loaded.password_hash is None
+        assert loaded.role == "member"
+        assert loaded.status == "active"
+        assert loaded.last_login_at is None
+
+
+async def test_username_unique(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
+        session.add(User(id="u_2", username="alice", display_name="Alice 2"))
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+
+async def test_auth_session_round_trip_and_cascade(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    from datetime import timedelta
+
+    from octave.db.models import AuthSession
+    from octave.db.models.base import utcnow
+
+    now = utcnow()
+    async with session_factory() as session:
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
+        session.add(
+            AuthSession(
+                id="tok_hash",
+                user_id="u_1",
+                created_at=now,
+                expires_at=now + timedelta(days=14),
+                last_seen_at=now,
+            )
+        )
+        await session.commit()
+        loaded = await session.get(AuthSession, "tok_hash")
+        assert loaded is not None
+        assert loaded.user_id == "u_1"
+    async with session_factory() as session:
+        user = await session.get(User, "u_1")
+        assert user is not None
+        await session.delete(user)
+        await session.commit()
+    async with session_factory() as session:
+        assert await session.get(AuthSession, "tok_hash") is None

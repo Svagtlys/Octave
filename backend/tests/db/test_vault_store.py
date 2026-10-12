@@ -42,8 +42,8 @@ async def env(
         await adapter.ensure_vector_store(conn)
     factory = adapter.make_session_factory(engine)
     async with factory() as session:
-        session.add(User(id="u_1", display_name="Alice"))
-        session.add(User(id="u_2", display_name="Bob"))
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
+        session.add(User(id="u_2", username="bob", display_name="Bob"))
         await session.commit()
     yield adapter, factory
     await engine.dispose()

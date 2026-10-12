@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from octave.db.lifespan import db_lifespan
 from octave.mcp.lifespan import mcp_lifespan
 from octave.middleware import LogRequestMiddleware, add_cors, add_error_handlers
+from octave.routes.auth import router as auth_router
 from octave.routes.health import router as health_router
 from octave.websocket.connection import router as ws_router
 
@@ -37,4 +38,5 @@ app.add_middleware(LogRequestMiddleware)
 
 # Routes
 app.include_router(health_router, prefix="/api")
+app.include_router(auth_router, prefix="/api")
 app.include_router(ws_router)

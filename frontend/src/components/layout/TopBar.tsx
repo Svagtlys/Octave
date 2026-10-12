@@ -1,5 +1,6 @@
-import { useRouterState } from '@tanstack/react-router';
+import { useNavigate, useRouterState } from '@tanstack/react-router';
 import type { CSSProperties } from 'react';
+import { useAuth } from '../../lib/auth/useAuth';
 import { colors } from '../../theme';
 
 /**
@@ -8,6 +9,8 @@ import { colors } from '../../theme';
  * issue enables it.
  */
 export default function TopBar() {
+  const { user, logout, status } = useAuth();
+  const navigate = useNavigate();
   const title = useRouterState({
     select: (s) => {
       let found: string | undefined;
@@ -31,6 +34,22 @@ export default function TopBar() {
           style={styles.paletteInput}
         />
       </div>
+      {status === 'authed' && user !== null && (
+        <div style={styles.userArea}>
+          <span style={styles.userName} data-testid="current-user">
+            {user.display_name}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              void logout().then(() => navigate({ to: '/login' }));
+            }}
+            style={styles.signOut}
+          >
+            Sign out
+          </button>
+        </div>
+      )}
     </header>
   );
 }
@@ -57,5 +76,16 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: 7,
     padding: '6px 12px',
     width: 200,
+  },
+  userArea: { display: 'flex', alignItems: 'center', gap: 10 },
+  userName: { fontSize: '0.85rem', color: colors.textDim },
+  signOut: {
+    fontSize: '0.8rem',
+    color: colors.text,
+    background: 'transparent',
+    border: `1px solid ${colors.border}`,
+    borderRadius: 7,
+    padding: '5px 10px',
+    cursor: 'pointer',
   },
 };

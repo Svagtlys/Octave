@@ -54,8 +54,8 @@ export default function SetupView() {
     <div style={styles.card}>
       <h2 style={styles.heading}>Welcome to Octave</h2>
       <p style={styles.note}>
-        Create the first account. It becomes the owner. Username: 2-32
-        characters — lowercase letters, numbers, dots, dashes, underscores.
+        Create the first account. It becomes the owner. Username: 2-32 characters — lowercase
+        letters, numbers, dots, dashes, underscores.
       </p>
       <form onSubmit={onSubmit} style={styles.form}>
         <label style={styles.label}>

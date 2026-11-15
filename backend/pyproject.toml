@@ -68,6 +68,9 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # The multi-user auth spec pins these error names verbatim (domain-condition
 # names like InvalidCredentials/NotLastOwnerGuard, not Error-suffixed).
 "src/octave/auth/errors.py" = ["N818"]
+# Issue #21 pins McpServerNameTaken verbatim: it mirrors the auth plane's
+# UsernameTaken (domain-condition name, not Error-suffixed).
+"src/octave/mcp/errors.py" = ["N818"]
 
 [tool.mypy]
 strict = true

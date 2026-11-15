@@ -13,6 +13,7 @@ __all__ = [
     "McpError",
     "McpNotConnectedError",
     "McpRpcError",
+    "McpServerNameTaken",
     "McpTimeoutError",
 ]
 
@@ -36,6 +37,10 @@ class McpTimeoutError(McpError):
 
 class McpConfigError(McpError):
     """Server configuration is malformed (raised before any I/O)."""
+
+
+class McpServerNameTaken(McpError):
+    """Another mcp_servers row already owns this unique name."""
 
 
 class McpRpcError(McpError):

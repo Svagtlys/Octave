@@ -235,3 +235,28 @@ def test_pre_auth_db_backfill(tmp_path: Path) -> None:
             assert sess == 1 and vault == 1
     finally:
         engine.dispose()
+
+
+def test_mcp_server_headers_column_migrates_forward(tmp_path: Path) -> None:
+    """A row written at the previous head survives the headers migration."""
+    url = f"sqlite:///{tmp_path / 'mig.db'}"
+    upgrade(url, revision="d8e5f3a7c2b9")  # head before this work item
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO mcp_servers (id, name, transport, command, enabled, "
+                "created_at, updated_at) VALUES "
+                "('m_1', 'Legacy', 'stdio', 'old-cmd', 1, "
+                "'2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+            )
+        )
+    engine.dispose()
+    upgrade(url)  # to head (includes the headers column)
+    engine = create_engine(url)
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT headers FROM mcp_servers WHERE id = 'm_1'")
+        ).one()
+    engine.dispose()
+    assert row.headers is None

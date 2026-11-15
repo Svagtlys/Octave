@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 
@@ -12,6 +13,14 @@ from octave.websocket.connection import router as ws_router
 
 AppLifespan = Callable[[FastAPI], AbstractAsyncContextManager[None, bool | None]]
 """A lifespan callable: async context factory taking the app."""
+
+
+# Alembic's fileConfig(alembic.ini) runs at startup inside db_lifespan and
+# pins the root logger to WARN. Pin the octave subtree to INFO so plane logs
+# (MCP fleet summary, server state transitions) propagate to the root's
+# handler regardless: an explicit level on this logger wins over inherited
+# effective levels, and propagation does not re-filter at the root.
+logging.getLogger("octave").setLevel(logging.INFO)
 
 
 def compose_lifespans(*lifespans: AppLifespan) -> AppLifespan:

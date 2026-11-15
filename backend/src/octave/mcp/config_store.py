@@ -126,6 +126,61 @@ class McpConfigStore:
         row = await self._session.get(McpServer, server_id)
         return None if row is None else _to_entry(row)
 
+    async def update(
+        self,
+        server_id: str,
+        *,
+        name: str | None = None,
+        config: ServerConfig | None = None,
+        enabled: bool | None = None,
+    ) -> McpServerEntry | None:
+        """Replace exactly the provided fields (``None`` = leave unchanged).
+        A provided ``config`` replaces the whole transport column set.
+        Returns ``None`` if the id is absent."""
+        row = await self._session.get(McpServer, server_id)
+        if row is None:
+            return None
+        if name is not None and name != row.name:
+            if await self._get_by_name(name) is not None:
+                raise McpServerNameTaken(name)
+            row.name = name
+        if config is not None:
+            for column, value in _columns_for(config).items():
+                setattr(row, column, value)
+        if enabled is not None:
+            row.enabled = enabled
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:  # race between check and flush
+            raise McpServerNameTaken(name if name is not None else row.name) from exc
+        return _to_entry(row)
+
+    async def delete(self, server_id: str) -> bool:
+        """Remove one row. Idempotent — absent is not an error."""
+        row = await self._session.get(McpServer, server_id)
+        if row is None:
+            return False
+        await self._session.delete(row)
+        await self._session.flush()
+        return True
+
+    async def list_servers(self, *, enabled_only: bool = False) -> list[McpServerEntry]:
+        """Strict entry read (loud on corrupt rows). Startup uses
+        ``list_rows`` + per-row conversion to skip bad rows instead."""
+        return [
+            _to_entry(row)
+            for row in await self.list_rows(enabled_only=enabled_only)
+        ]
+
+    async def set_enabled(self, server_id: str, enabled: bool) -> bool:
+        """Targeted enable/disable. Returns existence."""
+        row = await self._session.get(McpServer, server_id)
+        if row is None:
+            return False
+        row.enabled = enabled
+        await self._session.flush()
+        return True
+
     async def list_rows(self, *, enabled_only: bool = False) -> Sequence[McpServer]:
         """Raw ORM rows, oldest first — for same-plane tolerant readers
         (the lifespan converts per row and skips corrupt ones)."""

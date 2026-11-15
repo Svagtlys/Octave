@@ -38,6 +38,9 @@ class McpServer(Base):
     args: Mapped[list[str] | None] = mapped_column(JSON)
     url: Mapped[str | None] = mapped_column(Text)
     env: Mapped[dict[str, str] | None] = mapped_column(JSON)
+    headers: Mapped[dict[str, str] | None] = mapped_column(JSON)
+    """HTTP auth headers (secrets — never log). stdio rows leave NULL."""
+
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=utcnow, nullable=False

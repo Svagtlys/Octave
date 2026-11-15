@@ -5,9 +5,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from octave.app import compose_lifespans
-from octave.mcp.config import StdioConfig
+from octave.db._bootstrap import create_sqlite_engine
+from octave.db.models import Base
+from octave.mcp.config import HttpConfig, StdioConfig
+from octave.mcp.config_store import McpConfigStore
 from octave.mcp.lifespan import mcp_lifespan
 from octave.mcp.manager import McpServerManager
 from octave.mcp.registry import ToolRegistry
@@ -84,3 +89,111 @@ def test_default_configs_publish_empty_registry() -> None:
     with TestClient(app) as client:
         registry = client.app.state.mcp_registry
         assert isinstance(registry, ToolRegistry)
+
+
+# -- DB-backed boot (configs=None default) --------------------------------------
+
+
+def _db_lifespan(
+    db_url: str, fake: FakeFactory, seed
+):  # noqa: ANN202 - test helper
+    """Lifespan that builds a migrated SQLite, seeds it, then boots mcp_lifespan."""
+
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+        engine = create_sqlite_engine(db_url)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as session:
+            await seed(McpConfigStore(session))
+            await session.commit()
+        app.state.db_session_factory = factory
+        async with mcp_lifespan(app, client_factory=fake):
+            yield
+        await engine.dispose()
+
+    return _lifespan
+
+
+async def _seed_enabled_and_disabled(store: McpConfigStore) -> None:
+    await store.create(name="Alpha", config=StdioConfig(command="alpha"))
+    await store.create(
+        name="Ghost", config=StdioConfig(command="ghost"), enabled=False
+    )
+
+
+def test_db_boot_registers_enabled_rows_only(tmp_path) -> None:  # noqa: ANN001
+    fake = FakeFactory()
+    app = FastAPI(
+        lifespan=_db_lifespan(f"sqlite:///{tmp_path / 'boot.db'}", fake, _seed_enabled_and_disabled)
+    )
+    with TestClient(app) as client:
+        manager: McpServerManager = client.app.state.mcp_manager
+        assert [s.name for s in manager.status()] == ["Alpha"]
+        assert manager.status()[0].state == "connected"
+
+
+async def _seed_with_corrupt_row(store: McpConfigStore) -> None:
+    """One good row + one CHECK-violating row (PRAGMA bypasses the constraint
+    so the defensive per-row skip path is exercised)."""
+    await store.create(name="Good", config=HttpConfig(url="http://h:1/m"))
+    await store._session.execute(  # noqa: SLF001 - test needs raw escape hatch
+        text("PRAGMA ignore_check_constraints=ON")
+    )
+    await store._session.execute(  # noqa: SLF001
+        text(
+            "INSERT INTO mcp_servers (id, name, transport, command, url, enabled, "
+            "created_at, updated_at) VALUES ('bad1', 'Broken', 'carrier-pigeon', "
+            "NULL, NULL, 1, '2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+        ),
+    )
+    await store._session.execute(  # noqa: SLF001
+        text("PRAGMA ignore_check_constraints=OFF")
+    )
+
+
+def test_db_boot_skips_corrupt_row_and_boots_siblings(
+    tmp_path, caplog
+) -> None:  # noqa: ANN001
+    import logging
+
+    fake = FakeFactory()
+    app = FastAPI(
+        lifespan=_db_lifespan(
+            f"sqlite:///{tmp_path / 'corrupt.db'}", fake, _seed_with_corrupt_row
+        )
+    )
+    with caplog.at_level(logging.ERROR, logger="octave.mcp.lifespan"):
+        with TestClient(app) as client:
+            manager: McpServerManager = client.app.state.mcp_manager
+            assert [s.name for s in manager.status()] == ["Good"]
+    assert any("bad1" in rec.message or "Broken" in rec.message for rec in caplog.records)
+
+
+def test_explicit_configs_bypass_db(tmp_path) -> None:  # noqa: ANN001
+    """A passed configs iterable wins even when a session factory exists."""
+    fake = FakeFactory()
+    db_url = f"sqlite:///{tmp_path / 'bypass.db'}"
+
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+        engine = create_sqlite_engine(db_url)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+        async with factory() as session:
+            await McpConfigStore(session).create(
+                name="FromDb", config=StdioConfig(command="db-server")
+            )
+            await session.commit()
+        app.state.db_session_factory = factory
+        configs = (("s1", "Explicit", StdioConfig(command="fake")),)
+        async with mcp_lifespan(app, configs=configs, client_factory=fake):
+            yield
+        await engine.dispose()
+
+    app = FastAPI(lifespan=_lifespan)
+    with TestClient(app) as client:
+        manager: McpServerManager = client.app.state.mcp_manager
+        assert [s.name for s in manager.status()] == ["Explicit"]

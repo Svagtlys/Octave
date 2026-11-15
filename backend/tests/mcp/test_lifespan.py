@@ -126,7 +126,9 @@ async def _seed_enabled_and_disabled(store: McpConfigStore) -> None:
 def test_db_boot_registers_enabled_rows_only(tmp_path) -> None:  # noqa: ANN001
     fake = FakeFactory()
     app = FastAPI(
-        lifespan=_db_lifespan(f"sqlite:///{tmp_path / 'boot.db'}", fake, _seed_enabled_and_disabled)
+        lifespan=_db_lifespan(
+            f"sqlite:///{tmp_path / 'boot.db'}", fake, _seed_enabled_and_disabled
+        )
     )
     with TestClient(app) as client:
         manager: McpServerManager = client.app.state.mcp_manager
@@ -168,7 +170,9 @@ def test_db_boot_skips_corrupt_row_and_boots_siblings(
         with TestClient(app) as client:
             manager: McpServerManager = client.app.state.mcp_manager
             assert [s.name for s in manager.status()] == ["Good"]
-    assert any("bad1" in rec.message or "Broken" in rec.message for rec in caplog.records)
+    assert any(
+        "bad1" in rec.message or "Broken" in rec.message for rec in caplog.records
+    )
 
 
 def test_explicit_configs_bypass_db(tmp_path) -> None:  # noqa: ANN001

@@ -78,7 +78,7 @@
 - [x] 4. Build server lifecycle manager (start, stop, restart, health monitoring) — PR #93 (per-server supervisors, backoff + crash-loop, probe-on-timeout; REST surface deferred to MCP Connector UI)
 - [x] 5. Implement tool discovery and caching (fetch tools, schemas, descriptions) — PR #98 (ToolRegistry inventory; event-driven invalidation; cursor pagination deferred to follow-up issue)
 - [x] 6. Create tool execution engine (invoke tools, handle responses/errors, timeouts) — PR #98 ((server_id, tool_name) surface over McpClient.call_tool)
-- [ ] 7. Add MCP server configuration persistence (store server configs in the unified database)
+- [x] 7. Add MCP server configuration persistence (store server configs in the unified database) — PR #144 (`McpConfigStore` + headers column + DB-backed `mcp_lifespan` boot)
 - [ ] 8. Implement MCP tool tagging system (label tools for internal Octave use, e.g., context retrieval, file operations)
 - [ ] 9. Add tool re-naming support (map custom names to underlying MCP tool names for agent-facing clarity)
 - [ ] 10. Add tool re-describing support (override tool descriptions for agents while preserving original MCP mapping)

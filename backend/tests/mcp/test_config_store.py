@@ -6,17 +6,19 @@ temp-file SQLite through create_sqlite_engine, constraints live.
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, AsyncSession
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from octave.db.models import McpServer
 from octave.mcp.config import HttpConfig, StdioConfig
-from octave.mcp.config_store import McpConfigStore, McpServerEntry, to_server_config
+from octave.mcp.config_store import McpConfigStore, to_server_config
 from octave.mcp.errors import McpConfigError, McpServerNameTaken
 
 # -- round-trips ---------------------------------------------------------------
 
 
-async def test_stdio_round_trip(session_factory: async_sessionmaker[AsyncSession]) -> None:
+async def test_stdio_round_trip(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
     async with session_factory() as session:
         store = McpConfigStore(session)
         entry = await store.create(
@@ -46,7 +48,9 @@ async def test_http_round_trip_with_headers(
         store = McpConfigStore(session)
         entry = await store.create(
             name="remote",
-            config=HttpConfig(url="http://h:9/t", headers={"Authorization": "Bearer x"}),
+            config=HttpConfig(
+                url="http://h:9/t", headers={"Authorization": "Bearer x"}
+            ),
         )
         await session.commit()
     async with session_factory() as session:
@@ -135,7 +139,9 @@ async def test_update_transport_swaps_back(
         entry = await store.create(
             name="flip", config=HttpConfig(url="http://h/m", headers={"A": "1"})
         )
-        back = await store.update(entry.id, config=StdioConfig(command="x", args=["-q"]))
+        back = await store.update(
+            entry.id, config=StdioConfig(command="x", args=["-q"])
+        )
         assert back is not None
         assert isinstance(back.config, StdioConfig)
         assert back.config.args == ["-q"]
@@ -234,7 +240,9 @@ async def test_store_never_commits(
 ) -> None:
     """An uncommitted store write is invisible to a second session."""
     async with session_factory() as session:
-        await McpConfigStore(session).create(name="quiet", config=StdioConfig(command="a"))
+        await McpConfigStore(session).create(
+            name="quiet", config=StdioConfig(command="a")
+        )
         # no commit
     async with session_factory() as session:
         assert await McpConfigStore(session).list_servers() == []

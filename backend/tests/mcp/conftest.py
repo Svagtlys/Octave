@@ -7,7 +7,7 @@ tests that need server-initiated traffic the harness ``Server`` cannot
 produce on its own.
 """
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -29,6 +29,8 @@ from mcp.types import (
     JSONRPCMessage,
     JSONRPCNotification,
     JSONRPCRequest,
+    ListToolsRequest,
+    ListToolsResult,
     ServerResult,
     TextContent,
     Tool,
@@ -46,13 +48,21 @@ _SCHEMA: dict[str, Any] = {
 _TOOL_NAMES = ("echo", "slow", "tool_error")
 
 
-def build_server() -> Server:
+def build_server(tool_pages: Sequence[Sequence[Tool]] | None = None) -> Server:
     """Low-level SDK server with a deterministic toolset.
 
     - ``echo``       → returns ``arguments["text"]``
     - ``slow``       → sleeps 30 s (client timeout tests)
     - ``tool_error`` → MCP-level failure: CallToolResult with ``isError``
     - unknown name   → raises SDK McpError(-32601) → JSON-RPC error response
+
+    ``tool_pages`` overrides the advertised toolset with a paginated
+    ``tools/list``: page ``i`` is served for ``cursor == str(i)`` (no
+    cursor → page 0), ``nextCursor`` chains to the next page and is null
+    on the last one. The ``@server.list_tools()`` decorator stays
+    registered so tools capability advertisement is unchanged — the raw
+    handler overrides dispatch only (same override pattern as
+    ``_raw_call_tool``; the decorator cannot emit ``nextCursor``).
     """
     server = Server("harness")
 
@@ -89,6 +99,20 @@ def build_server() -> Server:
         raise SdkMcpError(ErrorData(code=-32601, message=f"unknown tool: {name}"))
 
     server.request_handlers[CallToolRequest] = _raw_call_tool
+
+    if tool_pages is not None:
+
+        async def _raw_list_tools(req: ListToolsRequest) -> ServerResult:
+            # ``params`` is absent (None) when the client requests the first page.
+            cursor = req.params.cursor if req.params else None
+            index = int(cursor) if cursor else 0
+            page = tool_pages[index]
+            next_cursor = str(index + 1) if index + 1 < len(tool_pages) else None
+            return ServerResult(
+                ListToolsResult(tools=list(page), nextCursor=next_cursor)
+            )
+
+        server.request_handlers[ListToolsRequest] = _raw_list_tools
 
     return server
 
@@ -138,9 +162,11 @@ async def harness_cm(
     *,
     request_timeout: float = 5.0,
     on_lost: Callable[[str], None] | None = None,
+    tool_pages: Sequence[Sequence[Tool]] | None = None,
+    max_pages: int | None = None,
 ) -> AsyncIterator[tuple[McpClient, Peer]]:
     """Connect an ``McpClient`` to an in-process SDK server."""
-    server = build_server()
+    server = build_server(tool_pages)
     async with create_client_server_memory_streams() as (
         (cread, cwrite),
         (sread, swrite),
@@ -151,9 +177,12 @@ async def harness_cm(
             # The config is ignored: we hand the client pre-built streams.
             yield TransportStreams(read=cread, write=cwrite)
 
+        settings_kwargs: dict[str, Any] = {"request_timeout_seconds": request_timeout}
+        if max_pages is not None:
+            settings_kwargs["list_tools_max_pages"] = max_pages
         client = McpClient(
             transport_factory=_factory,
-            settings=McpSettings(request_timeout_seconds=request_timeout),
+            settings=McpSettings(**settings_kwargs),
             on_lost=on_lost,
         )
         async with anyio.create_task_group() as tg:

@@ -110,6 +110,14 @@ async def test_list_tools_follows_pagination_cursors(harness: Any) -> None:
     assert tools[0].input_schema["type"] == "object"
 
 
+async def test_list_tools_page_cap_raises(harness: Any) -> None:
+    pages = [[_fixture_tool(f"t{i}")] for i in range(5)]
+    async with harness(tool_pages=pages, max_pages=2) as (client, _peer):
+        with pytest.raises(McpError) as excinfo:
+            await client.list_tools()
+    assert "exceeded 2 pages" in str(excinfo.value)
+
+
 async def test_call_tool_maps_text_content(harness: Any) -> None:
     async with harness() as (client, _peer):
         result = await client.call_tool("echo", {"text": "hi"})

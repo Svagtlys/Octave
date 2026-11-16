@@ -345,13 +345,14 @@ class McpClient:
         with the server's ``nextCursor`` until it is null, concatenating
         pages. Each page is a separate request under ``_run`` (own
         timeout and death-cancel scope).
+
+        Raises ``McpError`` if the server has not terminated pagination
+        within ``settings.list_tools_max_pages`` pages.
         """
         session = self._require_session("list_tools")
         tools: list[ToolInfo] = []
         cursor: str | None = None
-        page_no = 0
-        while True:
-            page_no += 1
+        for page_no in range(1, self._settings.list_tools_max_pages + 1):
             result = await self._run(
                 f"list_tools(page {page_no})", session.list_tools(cursor=cursor)
             )
@@ -372,6 +373,10 @@ class McpClient:
                         len(tools),
                     )
                 return tools
+        raise McpError(
+            f"list_tools exceeded {self._settings.list_tools_max_pages} pages "
+            "without a null nextCursor — server is not paginating correctly"
+        )
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any] | None = None

@@ -18,6 +18,7 @@ from mcp.types import (
     JSONRPCMessage,
     JSONRPCRequest,
     JSONRPCResponse,
+    Tool,
 )
 
 from octave.mcp.client import McpClient
@@ -39,6 +40,11 @@ _INIT_RESULT = {
     "capabilities": {},
     "serverInfo": {"name": "stub", "version": "0.0"},
 }
+
+
+def _fixture_tool(name: str) -> Tool:
+    """SDK Tool for paginating-harness pages."""
+    return Tool(name=name, description=name, inputSchema={"type": "object"})
 
 
 async def test_connect_runs_initialize_and_captures_server_info(harness: Any) -> None:
@@ -88,6 +94,19 @@ async def test_list_tools_maps_to_octave_types(harness: Any) -> None:
         tools = await client.list_tools()
     assert [tool.name for tool in tools] == ["echo", "slow", "tool_error"]
     assert tools[0].description == "echo"
+    assert tools[0].input_schema["type"] == "object"
+
+
+async def test_list_tools_follows_pagination_cursors(harness: Any) -> None:
+    pages = [
+        [_fixture_tool("a"), _fixture_tool("b")],
+        [_fixture_tool("c")],
+        [_fixture_tool("d"), _fixture_tool("e")],
+    ]
+    async with harness(tool_pages=pages) as (client, _peer):
+        tools = await client.list_tools()
+    assert [tool.name for tool in tools] == ["a", "b", "c", "d", "e"]
+    assert tools[0].description == "a"
     assert tools[0].input_schema["type"] == "object"
 
 

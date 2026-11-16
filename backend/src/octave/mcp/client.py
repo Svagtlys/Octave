@@ -339,17 +339,39 @@ class McpClient:
         return True
 
     async def list_tools(self) -> list[ToolInfo]:
-        """Tools advertised by the server, mapped to Octave types."""
+        """Tools advertised by the server, mapped to Octave types.
+
+        Follows the ``tools/list`` pagination contract: keeps requesting
+        with the server's ``nextCursor`` until it is null, concatenating
+        pages. Each page is a separate request under ``_run`` (own
+        timeout and death-cancel scope).
+        """
         session = self._require_session("list_tools")
-        result = await self._run("list_tools", session.list_tools())
-        return [
-            ToolInfo(
-                name=tool.name,
-                description=tool.description,
-                input_schema=dict(tool.inputSchema),
+        tools: list[ToolInfo] = []
+        cursor: str | None = None
+        page_no = 0
+        while True:
+            page_no += 1
+            result = await self._run(
+                f"list_tools(page {page_no})", session.list_tools(cursor=cursor)
             )
-            for tool in result.tools
-        ]
+            tools.extend(
+                ToolInfo(
+                    name=tool.name,
+                    description=tool.description,
+                    input_schema=dict(tool.inputSchema),
+                )
+                for tool in result.tools
+            )
+            cursor = result.nextCursor
+            if cursor is None:
+                if page_no > 1:
+                    logger.debug(
+                        "list_tools pagination complete | pages=%s tools=%s",
+                        page_no,
+                        len(tools),
+                    )
+                return tools
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any] | None = None

@@ -75,3 +75,68 @@ class SessionStore:
         )
         await self._session.flush()
         return row
+
+    async def list_sessions(
+        self, *, participant_id: str, limit: int, offset: int
+    ) -> tuple[list[SessionActivityRow], int]:
+        """Current memberships for ``participant_id``, most-recently-active
+        first (``COALESCE(MAX(events.created_at), created_at)``, tie-break id
+        DESC), plus the caller's total membership count. Never commits."""
+        last_activity = func.coalesce(
+            select(func.max(Event.created_at))
+            .where(Event.session_id == Session.id)
+            .correlate(Session)
+            .scalar_subquery(),
+            Session.created_at,
+        ).label("last_activity")
+        last_message_payload = (
+            select(Event.payload)
+            .where(
+                Event.session_id == Session.id,
+                Event.kind.in_(_MESSAGE_KINDS),
+            )
+            .order_by(Event.seq.desc())
+            .limit(1)
+            .correlate(Session)
+            .scalar_subquery()
+            .label("last_message_payload")
+        )
+        membership = select(SessionParticipant.session_id).where(
+            SessionParticipant.participant_id == participant_id,
+            SessionParticipant.left_at.is_(None),
+        )
+        rows = await self._session.execute(
+            select(
+                Session.id,
+                Session.title,
+                Session.created_at,
+                last_activity,
+                last_message_payload,
+            )
+            .where(Session.id.in_(membership))
+            .order_by(last_activity.desc(), Session.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        total = await self._session.scalar(
+            select(func.count())
+            .select_from(SessionParticipant)
+            .where(
+                SessionParticipant.participant_id == participant_id,
+                SessionParticipant.left_at.is_(None),
+            )
+        )
+        items: list[SessionActivityRow] = []
+        for row in rows:
+            raw: Any = row.last_message_payload
+            content = raw.get("content") if isinstance(raw, dict) else None
+            items.append(
+                SessionActivityRow(
+                    id=row.id,
+                    title=row.title,
+                    created_at=row.created_at,
+                    last_activity=row.last_activity,
+                    last_message=content,
+                )
+            )
+        return items, int(total or 0)

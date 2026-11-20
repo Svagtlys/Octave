@@ -6,7 +6,7 @@ resolution. Events are appended through EventStore (the canonical write path),
 then re-timed for determinism.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -18,7 +18,7 @@ from octave.db.types import EventKind
 
 
 def _dt(day: int) -> datetime:
-    return datetime(2026, 1, day, tzinfo=timezone.utc)
+    return datetime(2026, 1, day, tzinfo=UTC)
 
 
 async def _seed_user(
@@ -74,7 +74,9 @@ async def test_get_participant_for_user_hit_and_miss(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_factory() as session:
-        await _seed_user(session, user_id="u_1", participant_id="p_1", display_name="Alice")
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
         store = SessionStore(session)
         found = await store.get_participant_for_user("u_1")
         assert found is not None
@@ -89,7 +91,9 @@ async def test_create_session_persists_session_and_owner_membership(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_factory() as session:
-        await _seed_user(session, user_id="u_1", participant_id="p_1", display_name="Alice")
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
         row = await SessionStore(session).create_session(
             owner_user_id="u_1", owner_participant_id="p_1", title="Planning"
         )
@@ -116,7 +120,9 @@ async def test_create_session_title_optional(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     async with session_factory() as session:
-        await _seed_user(session, user_id="u_1", participant_id="p_1", display_name="Alice")
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
         row = await SessionStore(session).create_session(
             owner_user_id="u_1", owner_participant_id="p_1", title=None
         )
@@ -133,7 +139,9 @@ async def test_create_session_never_commits(
 ) -> None:
     """An uncommitted create is invisible to a second session (store contract)."""
     async with session_factory() as session:
-        await _seed_user(session, user_id="u_1", participant_id="p_1", display_name="Alice")
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
         await SessionStore(session).create_session(
             owner_user_id="u_1", owner_participant_id="p_1", title="Quiet"
         )
@@ -141,3 +149,210 @@ async def test_create_session_never_commits(
     async with session_factory() as check:
         count = await check.scalar(select(func.count()).select_from(Session))
         assert count == 0
+
+
+# -- list_sessions: ordering ------------------------------------------------------
+
+
+async def test_orders_by_latest_event_with_created_at_fallback(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Sessions with events sort by MAX(events.created_at); eventless sessions
+    fall back to sessions.created_at. Mixed list interleaves."""
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        for sid, day in [("s_a", 1), ("s_b", 2), ("s_c", 3)]:
+            await _make_session(
+                session, session_id=sid, owner_user_id="u_1", created_at=_dt(day)
+            )
+            await session.flush()
+            member = SessionParticipant(session_id=sid, participant_id="p_1")
+            session.add(member)
+        await _append(
+            session, "s_c", EventKind.USER_MESSAGE, "late", created_at=_dt(10)
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        rows, total = await SessionStore(session).list_sessions(
+            participant_id="p_1", limit=10, offset=0
+        )
+        assert [r.id for r in rows] == ["s_c", "s_b", "s_a"]
+        assert total == 3
+
+
+async def test_tie_break_is_id_desc(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        for sid in ("s_a", "s_b"):
+            await _make_session(
+                session, session_id=sid, owner_user_id="u_1", created_at=_dt(5)
+            )
+            session.add(SessionParticipant(session_id=sid, participant_id="p_1"))
+        await session.commit()
+
+    async with session_factory() as session:
+        rows, _ = await SessionStore(session).list_sessions(
+            participant_id="p_1", limit=10, offset=0
+        )
+        assert [r.id for r in rows] == ["s_b", "s_a"]
+
+
+# -- list_sessions: preview ---------------------------------------------------------
+
+
+async def test_preview_picks_latest_message_ignoring_other_kinds(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Latest user/assistant message by seq wins; tool_call never previews but
+    still counts for last_activity."""
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        session.add(SessionParticipant(session_id="s_1", participant_id="p_1"))
+        await _append(
+            session,
+            "s_1",
+            EventKind.USER_MESSAGE,
+            "first",
+            author="p_1",
+            created_at=_dt(5),
+        )
+        await _append(
+            session, "s_1", EventKind.ASSISTANT_MESSAGE, "second", created_at=_dt(6)
+        )
+        await _append(session, "s_1", EventKind.TOOL_CALL, "tool", created_at=_dt(7))
+        await session.commit()
+
+    async with session_factory() as session:
+        rows, _ = await SessionStore(session).list_sessions(
+            participant_id="p_1", limit=10, offset=0
+        )
+        assert rows[0].last_message == "second"
+        assert rows[0].last_activity == _dt(7)
+
+
+async def test_preview_null_without_message_events(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A session with only system events has activity but no preview."""
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        session.add(SessionParticipant(session_id="s_1", participant_id="p_1"))
+        await _append(
+            session, "s_1", EventKind.SYSTEM, "notice", created_at=_dt(4)
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        rows, _ = await SessionStore(session).list_sessions(
+            participant_id="p_1", limit=10, offset=0
+        )
+        assert rows[0].last_message is None
+        assert rows[0].last_activity == _dt(4)
+
+
+# -- list_sessions: scoping + pagination ----------------------------------------
+
+
+async def test_scoping_excludes_other_users_sessions(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _seed_user(
+            session, user_id="u_2", participant_id="p_2", display_name="Bob"
+        )
+        await _make_session(
+            session, session_id="s_alice", owner_user_id="u_1", created_at=_dt(1)
+        )
+        session.add(SessionParticipant(session_id="s_alice", participant_id="p_1"))
+        await _make_session(
+            session, session_id="s_bob", owner_user_id="u_2", created_at=_dt(2)
+        )
+        session.add(SessionParticipant(session_id="s_bob", participant_id="p_2"))
+        await session.commit()
+
+    async with session_factory() as session:
+        rows, total = await SessionStore(session).list_sessions(
+            participant_id="p_1", limit=10, offset=0
+        )
+        assert [r.id for r in rows] == ["s_alice"]
+        assert total == 1
+
+
+async def test_left_membership_excluded(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        session.add(
+            SessionParticipant(
+                session_id="s_1", participant_id="p_1", left_at=_dt(3)
+            )
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        rows, total = await SessionStore(session).list_sessions(
+            participant_id="p_1", limit=10, offset=0
+        )
+        assert rows == []
+        assert total == 0
+
+
+async def test_pagination_slices_and_total(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """total counts all current memberships regardless of page slice; offset
+    past the end returns an empty page with the real total."""
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        for sid, day in [("s_1", 1), ("s_2", 2), ("s_3", 3)]:
+            await _make_session(
+                session, session_id=sid, owner_user_id="u_1", created_at=_dt(day)
+            )
+            session.add(SessionParticipant(session_id=sid, participant_id="p_1"))
+        await session.commit()
+
+    async with session_factory() as session:
+        store = SessionStore(session)
+        page1, total1 = await store.list_sessions(
+            participant_id="p_1", limit=2, offset=0
+        )
+        assert [r.id for r in page1] == ["s_3", "s_2"]
+        assert total1 == 3
+        page2, total2 = await store.list_sessions(
+            participant_id="p_1", limit=2, offset=2
+        )
+        assert [r.id for r in page2] == ["s_1"]
+        assert total2 == 3
+        beyond, total3 = await store.list_sessions(
+            participant_id="p_1", limit=2, offset=5
+        )
+        assert beyond == []
+        assert total3 == 3

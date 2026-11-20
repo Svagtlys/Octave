@@ -11,12 +11,13 @@ loading. Everything else here is engine-neutral SQLAlchemy + Alembic.
 
 from octave.db.adapter import DbAdapter
 from octave.db.config import DatabaseSettings, DbConfig
-from octave.db.errors import DbError
+from octave.db.errors import DbError, OwnerParticipantMissingError
 from octave.db.event_store import EventStore
 from octave.db.lifespan import db_lifespan
 from octave.db.migrations import current, upgrade
 from octave.db.models import Base
 from octave.db.registry import DbAdapterRegistry, default_registry, register_db
+from octave.db.session_store import SessionActivityRow, SessionStore
 
 # Imported for adapter registration side effects (registers "sqlite").
 from octave.db.sqlite_adapter import SqliteVecAdapter  # noqa: F401
@@ -32,6 +33,9 @@ __all__ = [
     "DatabaseSettings",
     "EventKind",
     "EventStore",
+    "OwnerParticipantMissingError",
+    "SessionActivityRow",
+    "SessionStore",
     "SqliteVecAdapter",
     "VaultHit",
     "VaultKind",

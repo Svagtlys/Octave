@@ -301,3 +301,15 @@ overkill while the styling surface is this small.
 layout/component styling". Future UI work puts pseudo-class/global rules in
 `index.css` and everything else inline. If the stylesheet outgrows a dozen
 rules, revisit CSS-in-JS or CSS modules.
+
+### 2026-11-20 — Session Lifecycle API: membership-scoped listing, transcript-derived activity
+
+**Context:** Issue #121 ships the first user-facing session surface (POST create + GET list). Two axes needed decisions: the listing visibility axis (ownership vs membership) and the activity/preview source (transcript-derived vs denormalized column).
+
+**Options Considered:** 1) ownership-scoped listing (`created_by_user_id`) + denormalized `last_activity` column; 2) membership-scoped listing (`session_participants`, `left_at IS NULL`) + transcript-derived activity/preview via correlated scalar subqueries; 3) LEFT JOIN/GROUP BY listing with a batch preview query.
+
+**Decision:** Option 2. `SessionStore` (never-commits, plane-owned store contract) lists via the membership join; `last_activity = COALESCE(MAX(events.created_at), sessions.created_at)`; preview = content of the latest `user_message`/`assistant_message` event (140-char truncation at the route boundary). A missing owner Participant fails loud: `OwnerParticipantMissingError(DbError)` → new middleware `DbError` → 500 handler; never self-healed.
+
+**Rationale:** Membership is the future-proof visibility axis — sharing a session later adds membership rows with zero query change. The transcript is the activity source of truth; a denormalized clock would drift and duplicate the events table's authority. Correlated subqueries avoid `GROUP BY` (no column enumeration) and ride the unique `(session_id, seq)` index; cost is per-row subquery execution, irrelevant at local-first single-instance scale. Self-healing the Participant invariant would paper over a backfill bug.
+
+**Consequences:** The chat UI (UI Chat Interface #4) and Integration #1 get a stable session-list contract pinned by store tests. `DbError` → 500 is the second plane-level middleware mapping; future db-plane invariant errors ride the same handler. Listing sessions created by others but joined becomes possible the moment a sharing work item writes membership rows. `total` in the envelope assumes membership counts are small (personal scale); cursor pagination is reserved for if that ever breaks.

@@ -11,6 +11,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message
 
 from octave.auth.errors import AuthError, http_status_of
+from octave.db.errors import DbError
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,16 @@ def add_error_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=http_status_of(exc),
             content={"error": type(exc).__name__, "detail": str(exc) or None},
+        )
+
+    @app.exception_handler(DbError)
+    async def db_error(request: Request, exc: DbError) -> JSONResponse:
+        """Single map point: db-plane invariant failures (e.g.
+        OwnerParticipantMissingError) -> 500 JSON. These are data-integrity
+        bugs, not client errors — the error name is the diagnostic."""
+        return JSONResponse(
+            status_code=500,
+            content={"error": type(exc).__name__, "detail": str(exc)},
         )
 
     @app.exception_handler(404)

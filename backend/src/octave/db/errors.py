@@ -15,6 +15,7 @@ __all__ = [
     "DbDimensionMismatchError",
     "DbError",
     "DbMigrationError",
+    "OwnerParticipantMissingError",
     "UnknownDbAdapterError",
 ]
 
@@ -53,6 +54,19 @@ class DbAdapterRegistrationError(DbError):
 
 class DbAdapterLoadError(DbError):
     """An import-string adapter could not be loaded."""
+
+
+class OwnerParticipantMissingError(DbError):
+    """A user has no Participant row — the invariant is broken.
+
+    ``AuthStore.create_user`` and the auth backfill migration guarantee one
+    Participant per user; a missing row is a data-integrity bug. Fail loud;
+    never self-heal by inserting a Participant on the fly (issue #121).
+    """
+
+    def __init__(self, user_id: str) -> None:
+        super().__init__(f"user {user_id!r} has no participant row")
+        self.user_id = user_id
 
 
 class UnknownDbAdapterError(DbError):

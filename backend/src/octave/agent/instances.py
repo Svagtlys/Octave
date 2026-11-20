@@ -8,7 +8,6 @@ Instances carry no context — the session transcript and the vault own it.
 import logging
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
 from typing import Any, cast
 
 from pydantic import TypeAdapter, ValidationError
@@ -27,6 +26,7 @@ from octave.agent.errors import (
     TerminalSessionError,
     TurnInProgressError,
 )
+from octave.db.binding import BindingNotResolved, ResolvedBinding, resolve_binding
 from octave.db.models import (
     Agent,
     AgentInstance,
@@ -37,7 +37,6 @@ from octave.db.models import (
 from octave.db.models.base import utcnow
 from octave.db.types import (
     AgentStatus,
-    ExplicitModelBinding,
     InstanceStatus,
     ModelBinding,
 )
@@ -64,14 +63,8 @@ def _validate_binding(agent: Agent) -> None:
         ) from exc
 
 
-@dataclass(frozen=True)
-class ResolvedModel:
-    """Concrete (adapter, model) pair for a turn. ``adapter=None`` means
-    "use the configured default adapter" (tag bindings defer engine
-    selection to the inference layer)."""
-
-    adapter: str | None
-    model: str
+ResolvedModel = ResolvedBinding
+"""Back-compat alias (issue #36): resolution moved to octave.db.binding."""
 
 
 def resolve_model(
@@ -79,23 +72,13 @@ def resolve_model(
     *,
     tag_lookup: Callable[[str], str | None] | None = None,
 ) -> ResolvedModel:
-    """Resolve a binding to a concrete pair at turn start.
-
-    ``tag_lookup`` maps a capability tag to a model name; the turn runner
-    wires it once model tagging lands (Inference roadmap #7). A tag miss
-    fails loud — an agent with no usable model is unusable, and silent
-    fallback would hide misconfiguration (design spec §4).
-    """
-    if isinstance(binding, ExplicitModelBinding):
-        return ResolvedModel(adapter=binding.adapter, model=binding.model)
-    if tag_lookup is None:
-        raise ModelBindingError(
-            f"tag binding {binding.tag!r} requires a tag_lookup"
-        )
-    model = tag_lookup(binding.tag)
-    if model is None:
-        raise ModelBindingError(f"model tag {binding.tag!r} resolves to nothing")
-    return ResolvedModel(adapter=None, model=model)
+    """Thin plane wrapper over ``octave.db.binding.resolve_binding``: maps
+    the neutral error to the agent-plane type (existing contract, issue #36
+    extraction)."""
+    try:
+        return resolve_binding(binding, tag_lookup=tag_lookup)
+    except BindingNotResolved as exc:
+        raise ModelBindingError(str(exc)) from exc
 
 
 class AgentInstanceManager:

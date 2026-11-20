@@ -68,3 +68,17 @@ class TestSupervisionSettings:
         assert settings.restart_max_attempts == 5
         assert settings.probe_timeout_seconds == 5.0
         assert settings.stabilization_seconds == 60.0
+
+
+def test_settings_default_list_tools_max_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OCTAVE_MCP_LIST_TOOLS_MAX_PAGES", raising=False)
+    assert McpSettings().list_tools_max_pages == 20
+
+
+def test_settings_env_override_list_tools_max_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OCTAVE_MCP_LIST_TOOLS_MAX_PAGES", "3")
+    assert McpSettings().list_tools_max_pages == 3

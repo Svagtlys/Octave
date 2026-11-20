@@ -68,6 +68,11 @@ class McpSettings(BaseSettings):
     Separate from request_timeout_seconds: a slow-to-boot server must not be
     penalized by callers who tighten the steady-state per-request budget."""
 
+    list_tools_max_pages: int = 20
+    """Max tools/list round-trips before list_tools() raises McpError.
+    Bounds a server that never returns a null nextCursor; generous for
+    legitimate servers (most advertise <100 tools total)."""
+
     restart_base_delay_seconds: float = 1.0
     """First auto-restart delay; exponential backoff multiplies by 2 per attempt."""
 

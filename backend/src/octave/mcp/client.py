@@ -339,17 +339,44 @@ class McpClient:
         return True
 
     async def list_tools(self) -> list[ToolInfo]:
-        """Tools advertised by the server, mapped to Octave types."""
+        """Tools advertised by the server, mapped to Octave types.
+
+        Follows the ``tools/list`` pagination contract: keeps requesting
+        with the server's ``nextCursor`` until it is null, concatenating
+        pages. Each page is a separate request under ``_run`` (own
+        timeout and death-cancel scope).
+
+        Raises ``McpError`` if the server has not terminated pagination
+        within ``settings.list_tools_max_pages`` pages.
+        """
         session = self._require_session("list_tools")
-        result = await self._run("list_tools", session.list_tools())
-        return [
-            ToolInfo(
-                name=tool.name,
-                description=tool.description,
-                input_schema=dict(tool.inputSchema),
+        tools: list[ToolInfo] = []
+        cursor: str | None = None
+        for page_no in range(1, self._settings.list_tools_max_pages + 1):
+            result = await self._run(
+                f"list_tools(page {page_no})", session.list_tools(cursor=cursor)
             )
-            for tool in result.tools
-        ]
+            tools.extend(
+                ToolInfo(
+                    name=tool.name,
+                    description=tool.description,
+                    input_schema=dict(tool.inputSchema),
+                )
+                for tool in result.tools
+            )
+            cursor = result.nextCursor
+            if cursor is None:
+                if page_no > 1:
+                    logger.debug(
+                        "list_tools pagination complete | pages=%s tools=%s",
+                        page_no,
+                        len(tools),
+                    )
+                return tools
+        raise McpError(
+            f"list_tools exceeded {self._settings.list_tools_max_pages} pages "
+            "without a null nextCursor — server is not paginating correctly"
+        )
 
     async def call_tool(
         self, name: str, arguments: dict[str, Any] | None = None

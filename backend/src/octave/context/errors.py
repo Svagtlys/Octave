@@ -6,8 +6,11 @@ share types. The composition root maps whichever it catches from its two
 components.
 """
 
+from octave.db.types import SelectionReason
+
 __all__ = [
     "AgentNotFound",
+    "ContextBudgetExceededError",
     "ContextError",
     "ModelBindingNotResolved",
     "ParticipantNotFound",
@@ -48,3 +51,37 @@ class ParticipantNotFound(ContextError):
     def __init__(self, agent_id: str) -> None:
         super().__init__(f"agent {agent_id!r} has no participant row")
         self.agent_id = agent_id
+
+
+class ContextBudgetExceededError(ContextError):
+    """Selected standing context exceeds the token budget (issue #36).
+    Nothing was dropped and nothing was written — trim the agent's
+    assignments/tags and re-run session start. ``drop_hint`` lists every
+    selected item as ``(name, reason)``; the message groups them
+    lowest-precedence first (agent_tag → global → explicit) as the trim
+    order (Decision 5)."""
+
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        agent_id: str,
+        budget_tokens: int,
+        estimated_tokens: int,
+        drop_hint: list[tuple[str, SelectionReason]],
+    ) -> None:
+        self.session_id = session_id
+        self.agent_id = agent_id
+        self.budget_tokens = budget_tokens
+        self.estimated_tokens = estimated_tokens
+        self.drop_hint = drop_hint
+        parts: list[str] = []
+        for reason in ("agent_tag", "global", "explicit"):
+            names = [name for name, r in drop_hint if r == reason]
+            if names:
+                parts.append(f"{reason}: {', '.join(names)}")
+        hint = "; trim " + "; then ".join(parts) if parts else ""
+        super().__init__(
+            f"agent {agent_id!r} in session {session_id!r}: standing context "
+            f"~{estimated_tokens} tokens exceeds budget {budget_tokens}{hint}"
+        )

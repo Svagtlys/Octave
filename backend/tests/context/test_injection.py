@@ -33,6 +33,29 @@ async def test_error_types_are_context_local(env) -> None:
     assert AsyncSession  # keeps the import meaningful for mypy
 
 
+def test_context_budget_exceeded_error_shape() -> None:
+    from octave.context.errors import ContextBudgetExceededError
+
+    err = ContextBudgetExceededError(
+        session_id="s_1",
+        agent_id="a_1",
+        budget_tokens=1024,
+        estimated_tokens=2000,
+        drop_hint=[
+            ("explicit-pref", "explicit"),
+            ("global-pref", "global"),
+            ("tagged-skill", "agent_tag"),
+        ],
+    )
+    assert err.budget_tokens == 1024
+    assert err.estimated_tokens == 2000
+    message = str(err)
+    assert "2000" in message and "1024" in message
+    # lowest precedence first: agent_tag before global before explicit
+    assert message.index("tagged-skill") < message.index("global-pref")
+    assert message.index("global-pref") < message.index("explicit-pref")
+
+
 async def _seed(
     env,
     *,

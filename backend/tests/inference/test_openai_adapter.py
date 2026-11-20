@@ -483,3 +483,52 @@ async def test_tool_result_message_carries_tool_call_id_and_name() -> None:
         "tool_call_id": "call_1",
         "name": "mcp__fs__read",
     }
+
+
+async def test_list_models_extracts_dialect_context_window() -> None:
+    payload = {
+        "object": "list",
+        "data": [
+            {
+                "id": "llama-windowed",
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": "x",
+                "context_window": 131072,
+            },
+            {
+                "id": "no-window",
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": "x",
+            },
+            {
+                "id": "bad-window",
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": "x",
+                "context_length": -5,
+            },
+            {
+                "id": "str-window",
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": "x",
+                "max_context_window": "large",
+            },
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    adapter = _adapter(_mock_client(handler))
+    models = await adapter.list_models()
+    await adapter.aclose()
+    by_id = {m.id: m.context_window for m in models}
+    assert by_id == {
+        "llama-windowed": 131072,
+        "no-window": None,
+        "bad-window": None,
+        "str-window": None,
+    }

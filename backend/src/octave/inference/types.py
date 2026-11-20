@@ -129,3 +129,7 @@ class ModelInfo(BaseModel):
     id: str
     created: int | None = None
     owned_by: str | None = None
+    context_window: int | None = None
+    """Max context tokens, when the server reports it. Not part of the
+    OpenAI spec: extracted from dialect extension keys (llama.cpp /
+    Ollama spellings) by the OpenAI adapter (issue #36)."""

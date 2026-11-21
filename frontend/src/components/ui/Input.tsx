@@ -16,6 +16,6 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
       className={[styles.input, invalid && styles.invalid, className].filter(Boolean).join(' ')}
       {...rest}
     />
-  ),
+  )
 );
 Input.displayName = 'Input';

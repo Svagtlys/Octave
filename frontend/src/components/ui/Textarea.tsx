@@ -19,6 +19,6 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
         .join(' ')}
       {...rest}
     />
-  ),
+  )
 );
 Textarea.displayName = 'Textarea';

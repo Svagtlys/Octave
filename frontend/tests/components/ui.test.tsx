@@ -26,7 +26,7 @@ describe('Button', () => {
     render(
       <Button disabled onClick={onClick}>
         Save
-      </Button>,
+      </Button>
     );
     await userEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(onClick).not.toHaveBeenCalled();
@@ -38,7 +38,7 @@ describe('Field + Input (elicitation flat-form)', () => {
     render(
       <Field htmlFor="f1" label="Server name">
         <Input id="f1" />
-      </Field>,
+      </Field>
     );
     expect(screen.getByLabelText('Server name')).toBeDefined();
   });
@@ -47,7 +47,7 @@ describe('Field + Input (elicitation flat-form)', () => {
     render(
       <Field htmlFor="f2" label="Name" error="Required field">
         <Input id="f2" invalid />
-      </Field>,
+      </Field>
     );
     expect(screen.getByRole('alert').textContent).toBe('Required field');
     expect(screen.getByLabelText('Name').getAttribute('aria-invalid')).toBe('true');
@@ -57,9 +57,7 @@ describe('Field + Input (elicitation flat-form)', () => {
 describe('Checkbox', () => {
   it('toggles on click and via keyboard', async () => {
     const onCheckedChange = vi.fn();
-    render(
-      <Checkbox id="c1" label="Agree" checked={false} onCheckedChange={onCheckedChange} />,
-    );
+    render(<Checkbox id="c1" label="Agree" checked={false} onCheckedChange={onCheckedChange} />);
     // Click focuses the control in jsdom, so Space activates it directly.
     await userEvent.click(screen.getByRole('checkbox'));
     expect(onCheckedChange).toHaveBeenLastCalledWith(true);
@@ -80,7 +78,7 @@ describe('Select', () => {
           { value: 'a', label: 'Apple' },
           { value: 'b', label: 'Banana' },
         ]}
-      />,
+      />
     );
     const trigger = screen.getByRole('combobox');
     await userEvent.click(trigger);
@@ -95,7 +93,7 @@ describe('Select', () => {
           { value: 'a', label: 'Apple' },
           { value: 'd', label: 'Durian', disabled: true },
         ]}
-      />,
+      />
     );
     await userEvent.click(screen.getByRole('combobox'));
     const durian = await screen.findByRole('option', { name: 'Durian' });
@@ -109,7 +107,7 @@ describe('Modal', () => {
     render(
       <Modal open onOpenChange={onOpenChange} title="Confirm">
         <p>Body</p>
-      </Modal>,
+      </Modal>
     );
     // Radix Dialog hides content behind the dialog via aria-hidden on siblings
     // (react-remove-scroll) instead of an aria-modal attribute.
@@ -123,7 +121,7 @@ describe('Modal', () => {
     render(
       <Modal open onOpenChange={() => {}} title="Trap" footer={<Button>Confirm</Button>}>
         <Input id="modal-input" />
-      </Modal>,
+      </Modal>
     );
     const dialog = screen.getByRole('dialog');
     const tabbable = dialog.querySelectorAll('button, input, [tabindex]');
@@ -143,7 +141,7 @@ describe('Tooltip', () => {
         <Tooltip content="Helpful hint">
           <button>Target</button>
         </Tooltip>
-      </TooltipProvider>,
+      </TooltipProvider>
     );
     await userEvent.tab();
     expect(await screen.findByRole('tooltip')).toBeDefined();

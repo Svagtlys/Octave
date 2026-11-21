@@ -16,13 +16,19 @@ function CheckIcon() {
   );
 }
 
-export interface CheckboxProps
-  extends Omit<ComponentProps<typeof RadixCheckbox.Root>, 'children'> {
+export interface CheckboxProps extends Omit<ComponentProps<typeof RadixCheckbox.Root>, 'children'> {
   label?: string;
 }
 
 /** Boolean control (Radix behavior: space/enter toggle, indeterminate). */
-export function Checkbox({ label, checked, onCheckedChange, id, className, ...rest }: CheckboxProps) {
+export function Checkbox({
+  label,
+  checked,
+  onCheckedChange,
+  id,
+  className,
+  ...rest
+}: CheckboxProps) {
   return (
     <label className={[styles.wrapper, className].filter(Boolean).join(' ')} htmlFor={id}>
       <RadixCheckbox.Root

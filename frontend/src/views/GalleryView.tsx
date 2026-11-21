@@ -25,16 +25,15 @@ export default function GalleryView() {
   const [fruit, setFruit] = useState('apple');
   const [name, setName] = useState('');
 
-  const nameError = name.length > 0 && name.length < 3 ? 'Too short — minimum 3 characters.' : undefined;
+  const nameError =
+    name.length > 0 && name.length < 3 ? 'Too short — minimum 3 characters.' : undefined;
 
   return (
     <TooltipProvider>
       <div className={styles.page}>
         <header className={styles.pageHeader}>
           <h1>UI Primitives Gallery</h1>
-          <p>
-            Shared component library from issue #7 — review look & feel here before approving.
-          </p>
+          <p>Shared component library from issue #7 — review look & feel here before approving.</p>
         </header>
 
         <section className={styles.section}>

@@ -1,0 +1,83 @@
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  background: var(--color-bg-deep);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--font-md);
+  padding: 8px var(--space-3);
+  min-height: 36px;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.trigger:hover:not(:disabled):not(.invalid) {
+  border-color: var(--color-accent);
+}
+
+.trigger:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--focus-ring);
+}
+
+.trigger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Radix marks the Value span, not the trigger, when placeholder shows. */
+.trigger [data-placeholder-shown] {
+  color: var(--color-text-dim);
+}
+
+.invalid {
+  border-color: var(--color-err);
+}
+
+.icon {
+  color: var(--color-text-dim);
+  display: inline-flex;
+}
+
+.content {
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  z-index: 50;
+  min-width: var(--radix-select-trigger-width);
+}
+
+.viewport {
+  padding: var(--space-1);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-md);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  padding: 6px var(--space-3);
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+.item[data-highlighted] {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.item[data-disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

@@ -12,6 +12,7 @@ import { AuthProvider } from './lib/auth/useAuth';
 import PlaceholderView from './views/PlaceholderView';
 import LoginView from './views/LoginView';
 import SetupView from './views/SetupView';
+import GalleryView from './views/GalleryView';
 
 function NotFoundView() {
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -145,6 +146,16 @@ const setupRoute = createRoute({
   component: SetupView,
 });
 
+/**
+ * Dev-only primitives showcase (issue #7). Public so look & feel can be
+ * reviewed without the backend running; remove once views adopt the library.
+ */
+const galleryRoute = createRoute({
+  getParentRoute: () => publicRoute,
+  path: '/gallery',
+  component: GalleryView,
+});
+
 export const routeTree = rootRoute.addChildren([
   protectedRoute.addChildren([
     indexRoute,
@@ -154,7 +165,7 @@ export const routeTree = rootRoute.addChildren([
     agentsRoute,
     settingsRoute,
   ]),
-  publicRoute.addChildren([loginRoute, setupRoute]),
+  publicRoute.addChildren([loginRoute, setupRoute, galleryRoute]),
 ]);
 
 export const router = createRouter({

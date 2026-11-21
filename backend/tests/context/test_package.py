@@ -41,6 +41,7 @@ def test_public_names_are_exported() -> None:
         "AgentNotFound",
         "ArchiveReport",
         "ContextArchiver",
+        "ContextBudgetExceededError",
         "ContextBundle",
         "ContextInjector",
         "InjectedItem",
@@ -48,6 +49,9 @@ def test_public_names_are_exported() -> None:
         "ParticipantNotFound",
         "SessionNotFound",
         "TurnBracket",
+        "bundle_tokens",
+        "estimate_tokens",
         "reconstruct_turns",
+        "resolve_budget",
     ):
         assert hasattr(context_pkg, name), name

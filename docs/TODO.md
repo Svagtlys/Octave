@@ -92,7 +92,7 @@
 - [ ] 3. Build context vault using tagged MCP tools (discover and invoke tagged tools to populate skills, prompts, and preferences into the vault) [Depends on: MCP Connector #8–10]
 - [x] 4. Create context injection engine (select relevant context items based on rules/triggers) — PR #117 (dual-tag + additive-assignment selection; session-start durability via `context_injection` transcript event; `every_turn` and found-context deferred)
 - [x] 5. Implement agent context lifecycle (receive full context from completed agent runs via Agent Manager, embed into vector DB for future linked agent runs to query) — PR #114 (pull-only `ContextArchiver` over reconstructed turn brackets; verbatim `transcript_chunk` writer; Tier-1 `session_summary` embedding via read-modify-write; new `octave.context` plane)
-- [ ] 6. Add context relevance scoring or filtering (token budget management, priority ranking)
+- [x] 6. Add context relevance scoring or filtering (token budget management, priority ranking) — PR #148 (fail-loud token budget: min(model window × 0.25, per-agent); char-estimate counting; truncation rejected; relevance ranking deferred to CM #11)
 - [ ] 7. Build external database adapter interface (optional MCP-provided database override)
 - [ ] 8. Implement skill-to-tool/prompt linking (associate skills with specific tools or prompts)
 - [ ] 9. Add skill parameter templating (auto-replace placeholder parameters in skills with linked tool/prompt names)

@@ -8,8 +8,10 @@ only — never ``octave.agent`` (design spec 2026-09-30, Decision 9).
 
 from octave.context.archiver import ArchiveReport, ContextArchiver
 from octave.context.brackets import TurnBracket, reconstruct_turns
+from octave.context.budget import bundle_tokens, estimate_tokens, resolve_budget
 from octave.context.errors import (
     AgentNotFound,
+    ContextBudgetExceededError,
     ModelBindingNotResolved,
     ParticipantNotFound,
     SessionNotFound,
@@ -20,6 +22,7 @@ __all__ = [
     "AgentNotFound",
     "ArchiveReport",
     "ContextArchiver",
+    "ContextBudgetExceededError",
     "ContextBundle",
     "ContextInjector",
     "InjectedItem",
@@ -27,5 +30,8 @@ __all__ = [
     "ParticipantNotFound",
     "SessionNotFound",
     "TurnBracket",
+    "bundle_tokens",
+    "estimate_tokens",
     "reconstruct_turns",
+    "resolve_budget",
 ]

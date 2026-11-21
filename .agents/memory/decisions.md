@@ -313,3 +313,42 @@ rules, revisit CSS-in-JS or CSS modules.
 **Rationale:** Membership is the future-proof visibility axis — sharing a session later adds membership rows with zero query change. The transcript is the activity source of truth; a denormalized clock would drift and duplicate the events table's authority. Correlated subqueries avoid `GROUP BY` (no column enumeration) and ride the unique `(session_id, seq)` index; cost is per-row subquery execution, irrelevant at local-first single-instance scale. Self-healing the Participant invariant would paper over a backfill bug.
 
 **Consequences:** The chat UI (UI Chat Interface #4) and Integration #1 get a stable session-list contract pinned by store tests. `DbError` → 500 is the second plane-level middleware mapping; future db-plane invariant errors ride the same handler. Listing sessions created by others but joined becomes possible the moment a sharing work item writes membership rows. `total` in the envelope assumes membership counts are small (personal scale); cursor pagination is reserved for if that ever breaks.
+
+### 2026-11-20 — Context Token Budget: Fail-Loud Enforcement
+
+**Context:** CM #6 (issue #36): standing-context injection (#34) had no size
+limit; an aggressive tagger can starve the chat window. The issue proposed
+truncation by precedence; brainstorming rejected it — silently (or even
+loudly) discarding user-named context is a quality cliff discovered only as
+worse agent behavior.
+
+**Options Considered:** 1) truncate by precedence, fail only at the floor;
+2) drop + transcript event; 3) fail loud, no truncation, precedence survives
+only as the error's drop-hint.
+
+**Decision:** Option 3. Effective budget = `min(floor(model_context_window ×
+0.25), assignments.token_budget)`; the per-agent value only ever tightens.
+Window from `ModelInfo.context_window` (new optional field; OpenAI adapter
+extracts dialect extension keys via `model_extra`), falling back to a
+constructor default (8192) on any miss — the guard never silently off.
+Counting: char estimate `ceil(chars/4)` (archiver precedent) — deterministic,
+zero deps, over-estimation visible because over-budget raises. Enforcement
+inside `ensure_injected` after the idempotence short-circuit: `select()`
+stays pure; over-budget raises `ContextBudgetExceededError` (budget,
+estimate, precedence-ordered drop-hint) with nothing written. Extracted the
+duplicated binding resolvers to `octave/db/binding.py` (the 2026-09-30
+ADR's third-consumer trigger).
+
+**Rationale:** Explicit selections are user intent — the engine must not
+discard them; a failed session start with an actionable trim list beats a
+silently mangled context. Char-estimate fits a guardrail, not a billing
+system. Window via the agent's own binding because that is the model the
+injection competes with.
+
+**Consequences:** `ensure_injected` may now raise on first injection —
+Integration #1 maps it to a user-facing error. Idempotence means a session
+that injected once never re-checks (mid-session vault edits can't break a
+running session). `octave.context` now resolves inference adapters for
+window lookup only (never completions). Fraction/default are constructor
+args — retuning is composition-root wiring. A `token_budget` UI surface
+waits on the agent editor.

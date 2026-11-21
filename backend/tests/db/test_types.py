@@ -193,3 +193,30 @@ def test_effective_tags_is_not_serialized() -> None:
     assignments = AgentAssignments(tags=["code"])
     assert "effective_tags" not in assignments.model_dump()
     assert "effective_tags" not in assignments.model_dump_json()
+
+
+def test_assignments_token_budget_default_none() -> None:
+    assert AgentAssignments().token_budget is None
+
+
+def test_assignments_token_budget_round_trip() -> None:
+    dumped = AgentAssignments(token_budget=1500).model_dump()
+    assert dumped["token_budget"] == 1500
+    assert AgentAssignments.model_validate(dumped).token_budget == 1500
+
+
+def test_injection_payload_budget_fields_optional() -> None:
+    payload = ContextInjectionPayload(agent_id="a_1", items=[])
+    assert payload.budget_tokens is None
+    assert payload.estimated_tokens is None
+    # pre-#36 stored shape validates unchanged
+    ContextInjectionPayload.model_validate({"agent_id": "a_1", "items": []})
+
+
+def test_injection_payload_budget_fields_round_trip() -> None:
+    payload = ContextInjectionPayload(
+        agent_id="a_1", items=[], budget_tokens=1024, estimated_tokens=512
+    )
+    dumped = payload.model_dump()
+    assert dumped["budget_tokens"] == 1024
+    assert dumped["estimated_tokens"] == 512

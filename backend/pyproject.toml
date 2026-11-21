@@ -71,6 +71,10 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # Issue #21 pins McpServerNameTaken verbatim: it mirrors the auth plane's
 # UsernameTaken (domain-condition name, not Error-suffixed).
 "src/octave/mcp/errors.py" = ["N818"]
+# Issue #36 pins BindingNotResolved verbatim: it is the neutral exception the
+# plane wrappers map to ModelBindingError / ModelBindingNotResolved, mirroring
+# the context plane's suffix-free vocabulary.
+"src/octave/db/binding.py" = ["N818"]
 
 [tool.mypy]
 strict = true

@@ -31,9 +31,10 @@ from octave.context.brackets import TurnBracket, reconstruct_turns
 from octave.context.chunks import ChunkPlan, plan_chunks
 from octave.context.errors import ModelBindingNotResolved, SessionNotFound
 from octave.db.adapter import DbAdapter
+from octave.db.binding import BindingNotResolved, resolve_binding
 from octave.db.event_store import EventStore
 from octave.db.models import Event, Participant, Session, VaultItem
-from octave.db.types import ExplicitModelBinding, ModelBinding, VaultKind
+from octave.db.types import ModelBinding, VaultKind
 from octave.db.vault_store import VaultStore
 from octave.inference.adapter import InferenceAdapter
 from octave.inference.types import EmbeddingRequest
@@ -57,27 +58,6 @@ class ArchiveReport:
     summary_embedded: bool
     chunks_written: int
     chunks_skipped: int
-
-
-def _resolve_binding(
-    binding: ModelBinding,
-    *,
-    tag_lookup: Callable[[str], str | None] | None = None,
-) -> tuple[str | None, str]:
-    """(adapter_name_or_None, model). Duplicated from
-    ``octave.agent.instances.resolve_model``: the plane ban forbids the
-    import; a third consumer triggers extraction to a neutral home
-    (design spec open question)."""
-    if isinstance(binding, ExplicitModelBinding):
-        return binding.adapter, binding.model
-    if tag_lookup is None:
-        raise ModelBindingNotResolved(
-            f"tag binding {binding.tag!r} requires a tag_lookup"
-        )
-    model = tag_lookup(binding.tag)
-    if model is None:
-        raise ModelBindingNotResolved(f"model tag {binding.tag!r} resolves to nothing")
-    return None, model
 
 
 def _needs_embed(item: VaultItem | None, model: str) -> bool:
@@ -137,9 +117,13 @@ class ContextArchiver:
             )
         summary = await self._vault.get(f"session_summary:{session_id}")
 
-        adapter_name, model = _resolve_binding(
-            self._embed_binding, tag_lookup=self._tag_lookup
-        )
+        try:
+            resolved = resolve_binding(
+                self._embed_binding, tag_lookup=self._tag_lookup
+            )
+            adapter_name, model = resolved.adapter, resolved.model
+        except BindingNotResolved as exc:
+            raise ModelBindingNotResolved(str(exc)) from exc
         existing: dict[str, VaultItem | None] = {}
         for plan in plans:
             existing[plan.item_id] = await self._vault.get(plan.item_id)

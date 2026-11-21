@@ -10,18 +10,32 @@ design spec Decision 1).
 Read-side only: vault reads are direct SELECTs (VaultStore owns the WRITE
 invariants; nothing here mutates vault_items). Writes one event through the
 shipped EventStore. Never commits — callers own transaction boundaries.
-Never imports ``octave.agent`` (plane ban, Decision 9) or
-``octave.inference`` (zero model calls this item).
+Never imports ``octave.agent`` (plane ban, Decision 9). Imports
+``octave.inference`` types for context-window lookup only (issue #36) —
+never completions.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from octave.context.errors import AgentNotFound, ParticipantNotFound, SessionNotFound
+from octave.context.budget import (
+    DEFAULT_CONTEXT_WINDOW,
+    DEFAULT_CONTEXT_WINDOW_FRACTION,
+    bundle_tokens,
+    resolve_budget,
+)
+from octave.context.errors import (
+    AgentNotFound,
+    ContextBudgetExceededError,
+    ParticipantNotFound,
+    SessionNotFound,
+)
+from octave.db.binding import BindingNotResolved, resolve_binding
 from octave.db.event_store import EventStore
 from octave.db.models import (
     Agent,
@@ -36,9 +50,12 @@ from octave.db.types import (
     ContextInjectionPayload,
     EventKind,
     InjectedContextItem,
+    ModelBinding,
     SelectionReason,
     VaultKind,
 )
+from octave.inference.adapter import InferenceAdapter
+from octave.inference.errors import AdapterError
 
 __all__ = [
     "ContextBundle",
@@ -49,11 +66,15 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+_BINDING_ADAPTER: TypeAdapter[ModelBinding] = TypeAdapter(ModelBinding)
+
 GLOBAL_TAG = "global"
 """Reserved item tag: inject for every agent (design spec Decision 3)."""
 
 _PAGE = 100
 _REASON_RANK: dict[SelectionReason, int] = {"explicit": 0, "global": 1, "agent_tag": 2}
+_TRIM_RANK: dict[SelectionReason, int] = {"agent_tag": 0, "global": 1, "explicit": 2}
+"""Budget drop-hint order: lowest precedence first (issue #36 Decision 5)."""
 _SECTION_ORDER: dict[VaultKind, int] = {
     VaultKind.PROMPT: 0,
     VaultKind.PREFERENCE: 1,
@@ -93,9 +114,27 @@ class ContextInjector:
     """Session-start context selection + idempotent injection event write.
     Constructed with the caller's AsyncSession; never commits."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        adapter_for: Callable[[str | None], InferenceAdapter] | None = None,
+        tag_lookup: Callable[[str], str | None] | None = None,
+        context_window_fraction: float = DEFAULT_CONTEXT_WINDOW_FRACTION,
+        default_context_window: int = DEFAULT_CONTEXT_WINDOW,
+    ) -> None:
+        """``adapter_for=None`` keeps the budget guard on at the default
+        window (no seam configured — cheapest wiring, Decision 7)."""
+        if not 0 < context_window_fraction <= 1:
+            raise ValueError("context_window_fraction must be in (0, 1]")
+        if default_context_window < 1:
+            raise ValueError("default_context_window must be >= 1")
         self._session = session
         self._events = EventStore(session)
+        self._adapter_for = adapter_for
+        self._tag_lookup = tag_lookup
+        self._fraction = context_window_fraction
+        self._default_window = default_context_window
 
     async def select(self, *, session_id: str, agent_id: str) -> ContextBundle:
         """Pure selection: no writes, no inference, no participant needed."""
@@ -173,6 +212,28 @@ class ContextInjector:
         if existing.scalar_one_or_none() is not None:
             return None
         bundle = await self.select(session_id=session_id, agent_id=agent_id)
+        agent_row = await self._session.get(Agent, agent_id)
+        assert agent_row is not None  # select() validated existence
+        budget = resolve_budget(
+            model_window=await self._model_context_window(agent_row),
+            per_agent_budget=self._per_agent_budget(
+                self._parse_assignments(agent_row)
+            ),
+            fraction=self._fraction,
+        )
+        estimated = bundle_tokens(bundle.items)
+        if estimated > budget:
+            raise ContextBudgetExceededError(
+                session_id=session_id,
+                agent_id=agent_id,
+                budget_tokens=budget,
+                estimated_tokens=estimated,
+                # lowest precedence first: the trim order (Decision 5)
+                drop_hint=sorted(
+                    ((i.name, i.reason) for i in bundle.items),
+                    key=lambda t: _TRIM_RANK[t[1]],
+                ),
+            )
         payload = ContextInjectionPayload(
             agent_id=agent_id,
             items=[
@@ -185,6 +246,8 @@ class ContextInjector:
                 )
                 for i in bundle.items
             ],
+            budget_tokens=budget,
+            estimated_tokens=estimated,
         )
         await self._events.append(
             session_id,
@@ -203,6 +266,55 @@ class ContextInjector:
                 "agent %s has invalid assignments; treating as empty", agent.id
             )
             return AgentAssignments()
+
+    def _per_agent_budget(self, assignments: AgentAssignments) -> int | None:
+        budget = assignments.token_budget
+        if budget is None:
+            return None
+        if budget <= 0:
+            logger.warning(
+                "agent token_budget %r is not positive; treating as unset", budget
+            )
+            return None
+        return budget
+
+    async def _model_context_window(self, agent: Agent) -> int:
+        """Reported context window for the agent's bound model; the
+        configured default on any miss — the guard never silently off
+        (issue #36 Decision 3)."""
+        if self._adapter_for is None:
+            return self._default_window
+        if agent.model_binding is None:
+            logger.warning(
+                "agent %s has no model_binding; using default context window",
+                agent.id,
+            )
+            return self._default_window
+        try:
+            binding = _BINDING_ADAPTER.validate_python(agent.model_binding)
+            resolved = resolve_binding(binding, tag_lookup=self._tag_lookup)
+        except (ValidationError, BindingNotResolved):
+            logger.warning(
+                "agent %s has unresolvable model_binding; using default "
+                "context window",
+                agent.id,
+            )
+            return self._default_window
+        try:
+            models = await self._adapter_for(resolved.adapter).list_models()
+        except AdapterError:
+            logger.warning(
+                "context window lookup failed for model %s; using default",
+                resolved.model,
+            )
+            return self._default_window
+        for info in models:
+            if info.id == resolved.model and info.context_window is not None:
+                return info.context_window
+        logger.warning(
+            "model %s reports no context window; using default", resolved.model
+        )
+        return self._default_window
 
     async def _agent_participant(self, agent_id: str, session_id: str) -> str:
         """Resolve the agent's participant, requiring membership in the

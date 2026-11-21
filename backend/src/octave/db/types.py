@@ -146,6 +146,10 @@ class AgentAssignments(BaseModel):
     removal is a one-line delete once no writer sets it."""
     tags: list[str] = Field(default_factory=list)
     preference_names: list[str] = Field(default_factory=list)
+    token_budget: int | None = None
+    """Per-agent tightening of the model-derived injection ceiling
+    (issue #36): effective budget = min(ceiling, token_budget). Values
+    <= 0 are treated as unset by the injector, with a warning."""
 
     @property
     def effective_tags(self) -> list[str]:
@@ -204,3 +208,8 @@ class ContextInjectionPayload(BaseModel):
 
     agent_id: str
     items: list[InjectedContextItem]
+    budget_tokens: int | None = None
+    """Effective token budget in force at injection time (issue #36);
+    ``None`` on events written before #36."""
+    estimated_tokens: int | None = None
+    """Char-estimate size of the injected bundle (issue #36)."""

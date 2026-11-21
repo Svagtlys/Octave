@@ -68,6 +68,22 @@ def _chat_usage(usage: CompletionUsage | None) -> Usage | None:
     )
 
 
+_CONTEXT_WINDOW_KEYS = ("context_window", "max_context_window", "context_length")
+
+
+def _extract_context_window(model: object) -> int | None:
+    """First positive int under a candidate dialect key in the SDK model's
+    extra fields (the openai SDK retains non-standard keys via
+    ``model_extra``). The OpenAI spec carries no context window; dialect
+    servers do, under server-specific spellings (issue #36)."""
+    extra: dict[str, object] = getattr(model, "model_extra", None) or {}
+    for key in _CONTEXT_WINDOW_KEYS:
+        value = extra.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            return value
+    return None
+
+
 @register("openai")
 class OpenAIAdapter(InferenceAdapter):
     """Adapter for OpenAI-dialect servers (Ollama, vLLM, llama.cpp, LM Studio).
@@ -159,7 +175,12 @@ class OpenAIAdapter(InferenceAdapter):
         except openai.APIError as exc:
             raise _translate(exc) from exc
         return [
-            ModelInfo(id=model.id, created=model.created, owned_by=model.owned_by)
+            ModelInfo(
+                id=model.id,
+                created=model.created,
+                owned_by=model.owned_by,
+                context_window=_extract_context_window(model),
+            )
             for model in response.data
         ]
 

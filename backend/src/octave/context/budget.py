@@ -29,7 +29,8 @@ CHARS_PER_TOKEN = 4
 
 
 class _HasContent(Protocol):
-    content: str
+    @property
+    def content(self) -> str: ...
 
 
 def estimate_tokens(text: str) -> int:

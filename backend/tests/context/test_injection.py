@@ -7,10 +7,16 @@ VaultStore (no embeddings — selection never touches the vector layer).
 
 import logging
 
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from octave.context.errors import AgentNotFound, ParticipantNotFound
+from octave.context.budget import DEFAULT_CONTEXT_WINDOW
+from octave.context.errors import (
+    AgentNotFound,
+    ContextBudgetExceededError,
+    ParticipantNotFound,
+)
 from octave.context.injection import ContextBundle, ContextInjector
 from octave.db.models import (
     Agent,
@@ -23,6 +29,8 @@ from octave.db.models import (
 )
 from octave.db.types import EventKind, VaultKind
 from octave.db.vault_store import VaultStore
+from octave.inference.errors import AdapterConnectionError
+from octave.inference.types import ModelInfo
 
 
 async def test_error_types_are_context_local(env) -> None:
@@ -394,6 +402,10 @@ async def test_ensure_injected_writes_one_targeted_snapshot(env) -> None:
                 "reason": "global",
             }
         ],
+        # issue #36: no adapter seam → default 8192 window, 0.25 fraction;
+        # estimate = ceil(len("content of addr") / 4)
+        "budget_tokens": 2048,
+        "estimated_tokens": 4,
     }
 
 
@@ -537,3 +549,340 @@ def test_archiver_anchors_injection_events() -> None:
     ]
     brackets = reconstruct_turns(events, {"p_a1": "a_1"})
     assert [(b.seq_start, b.seq_end) for b in brackets] == [(2, 3)]
+
+
+class _StubAdapter:
+    """Duck-typed inference adapter: serves canned ModelInfo, counts calls."""
+
+    def __init__(self, models: list[ModelInfo]) -> None:
+        self._models = models
+        self.calls = 0
+
+    async def list_models(self) -> list[ModelInfo]:
+        self.calls += 1
+        return self._models
+
+
+class _RaisingAdapter:
+    async def list_models(self) -> list[ModelInfo]:
+        raise AdapterConnectionError("engine down")
+
+
+async def _set_model_binding(env, agent_id: str, binding: dict | None) -> None:
+    _adapter, factory = env
+    async with factory() as s:
+        agent = await s.get(Agent, agent_id)
+        assert agent is not None
+        agent.model_binding = binding
+        await s.commit()
+
+
+async def _ensure_with(env, session_id: str, agent_id: str, **ctor_kwargs):
+    _adapter, factory = env
+    async with factory() as s:
+        return await ContextInjector(s, **ctor_kwargs).ensure_injected(
+            session_id=session_id, agent_id=agent_id
+        ), ctor_kwargs.get("adapter_for")
+
+
+async def test_over_budget_raises_without_writing(env) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
+    await _set_model_binding(
+        env, "a_1", {"kind": "explicit", "adapter": "openai", "model": "m_1"}
+    )
+    await _item(
+        env,
+        "v_big",
+        user_id="u_1",
+        kind=VaultKind.PREFERENCE,
+        name="big",
+        tags=["global"],
+        content="x" * 8000,
+    )
+    stub = _StubAdapter([ModelInfo(id="m_1", context_window=4096)])
+    _adapter, factory = env
+    async with factory() as s:
+        with pytest.raises(ContextBudgetExceededError) as excinfo:
+            await ContextInjector(s, adapter_for=lambda name: stub).ensure_injected(
+                session_id="s_1", agent_id="a_1"
+            )
+    assert excinfo.value.budget_tokens == 1024  # 4096 * 0.25
+    assert excinfo.value.estimated_tokens == 2000  # 8000 / 4
+    assert await _injection_events(env) == []  # nothing written
+
+
+async def test_under_budget_event_records_budget_fields(env) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
+    await _set_model_binding(
+        env, "a_1", {"kind": "explicit", "adapter": "openai", "model": "m_1"}
+    )
+    await _item(
+        env,
+        "v_small",
+        user_id="u_1",
+        kind=VaultKind.PREFERENCE,
+        name="small",
+        tags=["global"],
+        content="x" * 400,
+    )
+    stub = _StubAdapter([ModelInfo(id="m_1", context_window=4096)])
+    _adapter, factory = env
+    async with factory() as s:
+        bundle = await ContextInjector(
+            s, adapter_for=lambda name: stub
+        ).ensure_injected(session_id="s_1", agent_id="a_1")
+        await s.commit()
+    assert bundle is not None
+    events = await _injection_events(env)
+    assert events[0].payload["budget_tokens"] == 1024
+    assert events[0].payload["estimated_tokens"] == 100
+
+
+async def test_per_agent_budget_wins_when_smaller(env) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {"token_budget": 50}})
+    await _set_model_binding(
+        env, "a_1", {"kind": "explicit", "adapter": "openai", "model": "m_1"}
+    )
+    await _item(
+        env,
+        "v_mid",
+        user_id="u_1",
+        kind=VaultKind.PREFERENCE,
+        name="mid",
+        tags=["global"],
+        content="x" * 600,
+    )
+    stub = _StubAdapter([ModelInfo(id="m_1", context_window=4096)])
+    _adapter, factory = env
+    async with factory() as s:
+        with pytest.raises(ContextBudgetExceededError) as excinfo:
+            await ContextInjector(s, adapter_for=lambda name: stub).ensure_injected(
+                session_id="s_1", agent_id="a_1"
+            )
+    assert excinfo.value.budget_tokens == 50  # per-agent beats ceiling 1024
+    assert excinfo.value.estimated_tokens == 150
+
+
+async def test_ceiling_wins_when_per_agent_larger(env) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {"token_budget": 100_000}})
+    await _set_model_binding(
+        env, "a_1", {"kind": "explicit", "adapter": "openai", "model": "m_1"}
+    )
+    await _item(
+        env,
+        "v_big",
+        user_id="u_1",
+        kind=VaultKind.PREFERENCE,
+        name="big",
+        tags=["global"],
+        content="x" * 8000,
+    )
+    stub = _StubAdapter([ModelInfo(id="m_1", context_window=4096)])
+    _adapter, factory = env
+    async with factory() as s:
+        with pytest.raises(ContextBudgetExceededError) as excinfo:
+            await ContextInjector(s, adapter_for=lambda name: stub).ensure_injected(
+                session_id="s_1", agent_id="a_1"
+            )
+    assert excinfo.value.budget_tokens == 1024  # ceiling beats per-agent
+
+
+async def test_no_adapter_seam_uses_default_window(env) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
+    await _item(
+        env,
+        "v_big",
+        user_id="u_1",
+        kind=VaultKind.PREFERENCE,
+        name="big",
+        tags=["global"],
+        content="x" * 12_000,
+    )
+    _adapter, factory = env
+    async with factory() as s:
+        with pytest.raises(ContextBudgetExceededError) as excinfo:
+            await ContextInjector(s).ensure_injected(session_id="s_1", agent_id="a_1")
+    assert excinfo.value.budget_tokens == int(DEFAULT_CONTEXT_WINDOW * 0.25)
+
+
+async def test_unreported_window_falls_back_to_default(env, caplog) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
+    await _set_model_binding(
+        env, "a_1", {"kind": "explicit", "adapter": "openai", "model": "m_1"}
+    )
+    await _item(
+        env,
+        "v_big",
+        user_id="u_1",
+        kind=VaultKind.PREFERENCE,
+        name="big",
+        tags=["global"],
+        content="x" * 12_000,
+    )
+    stub = _StubAdapter([ModelInfo(id="m_1")])  # context_window=None
+    _adapter, factory = env
+    async with factory() as s:
+        with pytest.raises(ContextBudgetExceededError) as excinfo:
+            await ContextInjector(s, adapter_for=lambda name: stub).ensure_injected(
+                session_id="s_1", agent_id="a_1"
+            )
+    assert excinfo.value.budget_tokens == int(DEFAULT_CONTEXT_WINDOW * 0.25)
+    assert "no context window" in caplog.text
+
+
+async def test_adapter_error_falls_back_to_default(env, caplog) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
+    await _set_model_binding(
+        env, "a_1", {"kind": "explicit", "adapter": "openai", "model": "m_1"}
+    )
+    await _item(
+        env,
+        "v_small",
+        user_id="u_1",
+        kind=VaultKind.PREFERENCE,
+        name="small",
+        tags=["global"],
+        content="tiny",
+    )
+    _adapter, factory = env
+    async with factory() as s:
+        bundle = await ContextInjector(
+            s, adapter_for=lambda name: _RaisingAdapter()
+        ).ensure_injected(session_id="s_1", agent_id="a_1")
+    assert bundle is not None  # guard stays on at the default ceiling
+    assert "lookup failed" in caplog.text
+
+
+async def test_null_model_binding_uses_default(env, caplog) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
+    await _item(
+        env,
+        "v_small",
+        user_id="u_1",
+        kind=VaultKind.PREFERENCE,
+        name="small",
+        tags=["global"],
+        content="tiny",
+    )
+    bundle = await _ensure_with(
+        env, "s_1", "a_1", adapter_for=lambda name: _StubAdapter([])
+    )
+    assert bundle[0] is not None
+    assert "no model_binding" in caplog.text
+
+
+async def test_non_positive_token_budget_treated_as_unset(env, caplog) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {"token_budget": -5}})
+    await _item(
+        env,
+        "v_small",
+        user_id="u_1",
+        kind=VaultKind.PREFERENCE,
+        name="small",
+        tags=["global"],
+        content="tiny",
+    )
+    stub = _StubAdapter([ModelInfo(id="m_1", context_window=4096)])
+    await _set_model_binding(
+        env, "a_1", {"kind": "explicit", "adapter": "openai", "model": "m_1"}
+    )
+    _adapter, factory = env
+    async with factory() as s:
+        bundle = await ContextInjector(
+            s, adapter_for=lambda name: stub
+        ).ensure_injected(session_id="s_1", agent_id="a_1")
+        await s.commit()
+    assert bundle is not None
+    events = await _injection_events(env)
+    assert events[0].payload["budget_tokens"] == 1024  # ceiling, not -5
+    assert "not positive" in caplog.text
+
+
+async def test_idempotence_skips_budget_work(env) -> None:
+    await _seed(env, sessions={"s_1": "u_1"}, agents={"a_1": {}})
+    await _set_model_binding(
+        env, "a_1", {"kind": "explicit", "adapter": "openai", "model": "m_1"}
+    )
+    stub = _StubAdapter([ModelInfo(id="m_1", context_window=4096)])
+    _adapter, factory = env
+    async with factory() as s:
+        injector = ContextInjector(s, adapter_for=lambda name: stub)
+        assert (
+            await injector.ensure_injected(session_id="s_1", agent_id="a_1") is not None
+        )
+        await s.commit()
+    # grow the bundle past the ceiling after injection: no re-check
+    await _item(
+        env,
+        "v_big",
+        user_id="u_1",
+        kind=VaultKind.PREFERENCE,
+        name="big",
+        tags=["global"],
+        content="x" * 8000,
+    )
+    _adapter, factory = env
+    async with factory() as s:
+        assert (
+            await ContextInjector(s, adapter_for=lambda name: stub).ensure_injected(
+                session_id="s_1", agent_id="a_1"
+            )
+            is None
+        )
+    assert stub.calls == 1  # second call never touched list_models
+
+
+def test_constructor_validates_wiring() -> None:
+    with pytest.raises(ValueError):
+        ContextInjector(None, context_window_fraction=0.0)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        ContextInjector(None, context_window_fraction=1.5)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        ContextInjector(None, default_context_window=0)  # type: ignore[arg-type]
+
+
+async def test_drop_hint_ordered_lowest_precedence_first(env) -> None:
+    # single seed (per plan note): the agent needs tags=["code"] for the
+    # tagged skill to select via agent_tag, plus the explicit by-name pick.
+    await _seed(
+        env,
+        sessions={"s_1": "u_1"},
+        agents={
+            "a_1": {
+                "token_budget": 10,
+                "tags": ["code"],
+                "preference_names": ["chosen"],
+            }
+        },
+    )
+    await _set_model_binding(
+        env, "a_1", {"kind": "explicit", "adapter": "openai", "model": "m_1"}
+    )
+    await _item(
+        env, "v_tag", user_id="u_1", kind=VaultKind.SKILL, name="tagged", tags=["code"]
+    )
+    await _item(
+        env,
+        "v_glob",
+        user_id="u_1",
+        kind=VaultKind.PREFERENCE,
+        name="globby",
+        tags=["global"],
+    )
+    await _item(
+        env,
+        "v_expl",
+        user_id="u_1",
+        kind=VaultKind.PREFERENCE,
+        name="chosen",
+        content="named",
+    )
+    stub = _StubAdapter([ModelInfo(id="m_1", context_window=4096)])
+    _adapter, factory = env
+    async with factory() as s:
+        with pytest.raises(ContextBudgetExceededError) as excinfo:
+            await ContextInjector(s, adapter_for=lambda name: stub).ensure_injected(
+                session_id="s_1", agent_id="a_1"
+            )
+    reasons = [r for _, r in excinfo.value.drop_hint]
+    assert reasons == ["agent_tag", "global", "explicit"]

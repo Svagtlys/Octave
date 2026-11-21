@@ -70,7 +70,7 @@ logger.addFilter(CorrelationFilter())
 
 - Use functional components with hooks
 - Strict TypeScript — no `any` types
-- Inline styles only (no CSS frameworks or preprocessors)
+- Styling: CSS Modules over design tokens (see `docs/adr/0001-ui-styling-direction.md`); no CSS frameworks or preprocessors; headless Radix primitives allowed for hard a11y behavior (modal/tooltip/select). Existing shell code keeps inline styles until migrated.
 - Use TanStack Query for server state management
 - All API calls must go through `apiFetch()` client utility
 - Components must handle loading, error, and empty states

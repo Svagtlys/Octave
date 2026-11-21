@@ -1,0 +1,29 @@
+.content {
+  background: var(--color-bg-deep);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: var(--font-sm);
+  padding: 6px var(--space-2);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  max-width: 280px;
+  z-index: 60;
+  animation: tooltipFade 100ms ease;
+}
+
+.arrow {
+  fill: var(--color-bg-deep);
+  stroke: var(--color-border);
+  stroke-width: 1;
+}
+
+@keyframes tooltipFade {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

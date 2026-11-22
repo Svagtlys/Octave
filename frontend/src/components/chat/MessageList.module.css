@@ -1,0 +1,89 @@
+.list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+}
+
+.row {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-2);
+}
+
+.row + .row {
+  border-top: 1px solid var(--color-border);
+}
+
+.avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  font-size: var(--font-sm);
+  font-weight: 700;
+  color: #fff;
+  user-select: none;
+}
+
+.avatarUser {
+  background: #3f3f66;
+}
+
+.avatarAgent {
+  background: linear-gradient(135deg, var(--color-accent), #5a4fcf);
+}
+
+.body {
+  min-width: 0;
+  flex: 1;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin-bottom: 2px;
+}
+
+.author {
+  font-weight: 600;
+  font-size: var(--font-md);
+  color: var(--color-text);
+}
+
+.agentRow .author {
+  color: var(--color-accent);
+}
+
+.roleBadge {
+  font-size: 0.62rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.timestamp {
+  font-size: var(--font-sm);
+  color: var(--color-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.content {
+  font-size: var(--font-md);
+  line-height: 1.5;
+  color: var(--color-text);
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+}
+
+.corrupt {
+  color: var(--color-text-dim);
+  font-style: italic;
+}
+
+.empty {
+  color: var(--color-text-dim);
+  text-align: center;
+  padding: var(--space-6) 0;
+}

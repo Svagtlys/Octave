@@ -1,0 +1,28 @@
+.container {
+  max-width: 760px;
+}
+
+.status {
+  color: var(--color-text-dim);
+  padding: var(--space-5) 0;
+}
+
+.errorBox {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  color: var(--color-err);
+  padding: var(--space-5) 0;
+}
+
+.inlineError {
+  color: var(--color-err);
+  margin-bottom: var(--space-3);
+}
+
+.loadMore {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4) 0;
+}

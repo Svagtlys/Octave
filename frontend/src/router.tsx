@@ -4,6 +4,7 @@ import {
   createRouter,
   Outlet,
   redirect,
+  useParams,
   useRouterState,
 } from '@tanstack/react-router';
 import AppShell from './components/layout/AppShell';
@@ -13,6 +14,7 @@ import PlaceholderView from './views/PlaceholderView';
 import LoginView from './views/LoginView';
 import SetupView from './views/SetupView';
 import GalleryView from './views/GalleryView';
+import SessionChatView from './views/SessionChatView';
 
 function NotFoundView() {
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -84,6 +86,24 @@ const sessionsRoute = createRoute({
   path: '/sessions',
   staticData: { title: 'Sessions' },
   component: () => <PlaceholderView title="Sessions" note="Chat interface lands in issue #7." />,
+});
+
+/**
+ * Transcript view for one session (issue #43). Session browsing/creation
+ * is a later issue; deep-links like /sessions/<id> land here. Params are
+ * read via useParams (not route props) because the route tree is
+ * hand-written without codegen, so TanStack cannot infer the props type.
+ */
+function SessionDetailRoute() {
+  const { sessionId } = useParams({ from: '/protected/sessions/$sessionId' });
+  return <SessionChatView sessionId={sessionId} />;
+}
+
+const sessionDetailRoute = createRoute({
+  getParentRoute: () => protectedRoute,
+  path: '/sessions/$sessionId',
+  staticData: { title: 'Sessions' },
+  component: SessionDetailRoute,
 });
 
 const vaultRoute = createRoute({
@@ -160,6 +180,7 @@ export const routeTree = rootRoute.addChildren([
   protectedRoute.addChildren([
     indexRoute,
     sessionsRoute,
+    sessionDetailRoute,
     vaultRoute,
     mcpRoute,
     agentsRoute,

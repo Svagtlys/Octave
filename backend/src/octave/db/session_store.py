@@ -16,7 +16,7 @@ without ``GROUP BY``; the preview subquery rides the unique index
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,9 +24,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from octave.db.models import Event, Participant, Session, SessionParticipant
 from octave.db.types import EventKind
 
-__all__ = ["SessionActivityRow", "SessionStore"]
+__all__ = [
+    "AccessVerdict",
+    "SessionActivityRow",
+    "SessionStore",
+    "TranscriptMessageRow",
+]
 
 _MESSAGE_KINDS = (str(EventKind.USER_MESSAGE), str(EventKind.ASSISTANT_MESSAGE))
+
+AccessVerdict = Literal["missing", "denied", "granted"]
+"""Session-read access outcome (issue #151). `granted` = owner or current
+participant (mirrors the WS join guard); `denied` = session exists but the
+caller holds neither; `missing` = no such session. The route maps verdicts
+to HTTP (404/403); the store stays HTTP-agnostic."""
 
 
 @dataclass(frozen=True)
@@ -38,6 +49,20 @@ class SessionActivityRow:
     created_at: datetime
     last_activity: datetime
     last_message: str | None
+
+
+@dataclass(frozen=True)
+class TranscriptMessageRow:
+    """One transcript message, raw (store-level): label and content
+    unprocessed. ``author_label`` is NULL when the author row is absent
+    (schema-nullable FK); ``content`` is NULL on a corrupt payload (the
+    preview-subquery tolerance)."""
+
+    seq: int
+    kind: str
+    author_label: str | None
+    content: str | None
+    created_at: datetime
 
 
 class SessionStore:
@@ -140,3 +165,68 @@ class SessionStore:
                 )
             )
         return items, int(total or 0)
+
+    async def resolve_access(self, session_id: str, user_id: str) -> AccessVerdict:
+        """Owner (``created_by_user_id``) or live participant (``left_at IS
+        NULL``) -> ``granted``; session row absent -> ``missing``; else
+        ``denied``. Mirrors the WS join guard (``_may_join``)."""
+        owner = await self._session.scalar(
+            select(Session.id).where(
+                Session.id == session_id, Session.created_by_user_id == user_id
+            )
+        )
+        if owner is not None:
+            return "granted"
+        participant = await self._session.scalar(
+            select(SessionParticipant.session_id)
+            .join(Participant, Participant.id == SessionParticipant.participant_id)
+            .where(
+                SessionParticipant.session_id == session_id,
+                Participant.user_id == user_id,
+                SessionParticipant.left_at.is_(None),
+            )
+        )
+        if participant is not None:
+            return "granted"
+        exists = await self._session.scalar(
+            select(Session.id).where(Session.id == session_id)
+        )
+        return "missing" if exists is None else "denied"
+
+    async def list_message_page(
+        self, session_id: str, *, after_seq: int, limit: int
+    ) -> list[TranscriptMessageRow]:
+        """Transcript window ``seq > after_seq`` (message kinds only), seq
+        ASC, ``LIMIT limit`` — the caller over-fetches by one for a has-more
+        probe. LEFT JOIN participants for the author label. Never commits."""
+        rows = await self._session.execute(
+            select(
+                Event.seq,
+                Event.kind,
+                Participant.label,
+                Event.payload,
+                Event.created_at,
+            )
+            .outerjoin(Participant, Participant.id == Event.author_participant_id)
+            .where(
+                Event.session_id == session_id,
+                Event.kind.in_(_MESSAGE_KINDS),
+                Event.seq > after_seq,
+            )
+            .order_by(Event.seq)
+            .limit(limit)
+        )
+        items: list[TranscriptMessageRow] = []
+        for row in rows:
+            raw: Any = row.payload
+            content = raw.get("content") if isinstance(raw, dict) else None
+            items.append(
+                TranscriptMessageRow(
+                    seq=row.seq,
+                    kind=row.kind,
+                    author_label=row.label,
+                    content=content,
+                    created_at=row.created_at,
+                )
+            )
+        return items

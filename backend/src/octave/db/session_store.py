@@ -28,6 +28,7 @@ __all__ = [
     "AccessVerdict",
     "SessionActivityRow",
     "SessionStore",
+    "TranscriptMessageRow",
 ]
 
 _MESSAGE_KINDS = (str(EventKind.USER_MESSAGE), str(EventKind.ASSISTANT_MESSAGE))
@@ -48,6 +49,20 @@ class SessionActivityRow:
     created_at: datetime
     last_activity: datetime
     last_message: str | None
+
+
+@dataclass(frozen=True)
+class TranscriptMessageRow:
+    """One transcript message, raw (store-level): label and content
+    unprocessed. ``author_label`` is NULL when the author row is absent
+    (schema-nullable FK); ``content`` is NULL on a corrupt payload (the
+    preview-subquery tolerance)."""
+
+    seq: int
+    kind: str
+    author_label: str | None
+    content: str | None
+    created_at: datetime
 
 
 class SessionStore:
@@ -177,3 +192,41 @@ class SessionStore:
             select(Session.id).where(Session.id == session_id)
         )
         return "missing" if exists is None else "denied"
+
+    async def list_message_page(
+        self, session_id: str, *, after_seq: int, limit: int
+    ) -> list[TranscriptMessageRow]:
+        """Transcript window ``seq > after_seq`` (message kinds only), seq
+        ASC, ``LIMIT limit`` — the caller over-fetches by one for a has-more
+        probe. LEFT JOIN participants for the author label. Never commits."""
+        rows = await self._session.execute(
+            select(
+                Event.seq,
+                Event.kind,
+                Participant.label,
+                Event.payload,
+                Event.created_at,
+            )
+            .outerjoin(Participant, Participant.id == Event.author_participant_id)
+            .where(
+                Event.session_id == session_id,
+                Event.kind.in_(_MESSAGE_KINDS),
+                Event.seq > after_seq,
+            )
+            .order_by(Event.seq)
+            .limit(limit)
+        )
+        items: list[TranscriptMessageRow] = []
+        for row in rows:
+            raw: Any = row.payload
+            content = raw.get("content") if isinstance(raw, dict) else None
+            items.append(
+                TranscriptMessageRow(
+                    seq=row.seq,
+                    kind=row.kind,
+                    author_label=row.label,
+                    content=content,
+                    created_at=row.created_at,
+                )
+            )
+        return items

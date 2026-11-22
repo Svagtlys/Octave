@@ -400,3 +400,94 @@ async def test_messages_joined_non_owner_200(app_and_factory) -> None:
         await _login(bob, "bob")
         response = await bob.get(f"/api/sessions/{session_id}/messages")
         assert response.status_code == 200
+
+
+async def test_messages_returns_transcript_with_labels(app_and_factory) -> None:
+    """Owner reads their transcript: ordered items, author labels,
+    non-message kinds excluded, timestamps present."""
+    app, factory = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        me = (await client.get("/api/auth/me")).json()
+        session_id = (await client.post("/api/sessions", json={})).json()["id"]
+        alice = await _participant_id(factory, me["id"])
+    await _seed_activity(
+        factory,
+        session_id,
+        [
+            (EventKind.USER_MESSAGE, "hi", _dt(5)),
+            (EventKind.TOOL_CALL, "tool", _dt(6)),
+            (EventKind.ASSISTANT_MESSAGE, "hello", _dt(7)),
+        ],
+        author=alice,
+    )
+    async with await _client(app) as client:
+        await _bootstrap_login(client)
+        body = (await client.get(f"/api/sessions/{session_id}/messages")).json()
+    assert [item["kind"] for item in body["items"]] == [
+        "user_message",
+        "assistant_message",
+    ]
+    assert [item["seq"] for item in body["items"]] == [1, 3]
+    assert [item["content"] for item in body["items"]] == ["hi", "hello"]
+    assert [item["author"] for item in body["items"]] == ["Alice", "Alice"]
+    assert body["items"][0]["timestamp"].startswith("2026-01-05")
+    assert body["next_cursor"] is None
+
+
+async def test_messages_empty_session(app_and_factory) -> None:
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        session_id = (await client.post("/api/sessions", json={})).json()["id"]
+        body = (await client.get(f"/api/sessions/{session_id}/messages")).json()
+        assert body == {"items": [], "next_cursor": None}
+
+
+async def test_messages_pagination_walk(app_and_factory) -> None:
+    """limit=2 over 3 messages: page 1 carries next_cursor = last seq; the
+    walk ends with next_cursor null."""
+    app, factory = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        me = (await client.get("/api/auth/me")).json()
+        session_id = (await client.post("/api/sessions", json={})).json()["id"]
+        alice = await _participant_id(factory, me["id"])
+    await _seed_activity(
+        factory,
+        session_id,
+        [
+            (EventKind.USER_MESSAGE, "m1", _dt(1)),
+            (EventKind.ASSISTANT_MESSAGE, "m2", _dt(2)),
+            (EventKind.USER_MESSAGE, "m3", _dt(3)),
+        ],
+        author=alice,
+    )
+    async with await _client(app) as client:
+        await _bootstrap_login(client)
+        page1 = (
+            await client.get(f"/api/sessions/{session_id}/messages?limit=2")
+        ).json()
+        assert [i["seq"] for i in page1["items"]] == [1, 2]
+        assert page1["next_cursor"] == 2
+
+        page2 = (
+            await client.get(
+                f"/api/sessions/{session_id}/messages?limit=2&cursor=2"
+            )
+        ).json()
+        assert [i["seq"] for i in page2["items"]] == [3]
+        assert page2["next_cursor"] is None
+
+
+async def test_messages_pagination_validation(app_and_factory) -> None:
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        session_id = (await client.post("/api/sessions", json={})).json()["id"]
+        for url in (
+            f"/api/sessions/{session_id}/messages?limit=0",
+            f"/api/sessions/{session_id}/messages?limit=201",
+            f"/api/sessions/{session_id}/messages?cursor=-1",
+        ):
+            assert (await client.get(url)).status_code == 422, url

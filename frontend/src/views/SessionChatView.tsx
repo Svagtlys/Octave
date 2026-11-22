@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../lib/api/client';
-import { fetchSessionMessages } from '../lib/api/sessions';
+import { fetchLatestMessages, fetchOlderMessages } from '../lib/api/sessions';
 import type { TranscriptMessage } from '../lib/api/sessions';
 import { MessageList } from '../components/chat/MessageList';
 import { Button } from '../components/ui';
@@ -22,31 +22,31 @@ export interface SessionChatViewProps {
 }
 
 /**
- * Chat transcript view for one session (issue #43). Owns the fetch
- * lifecycle: first page on mount, "load newer" appends subsequent cursor
- * pages (the endpoint pages forward by `seq`). Loading, error (with
- * retry), and empty states are all rendered per the coding rules.
+ * Chat transcript view for one session (issue #43). Opens at the NEWEST
+ * page and pages backward: "Load older messages" prepends earlier cursor
+ * pages while the newest stay anchored. Loading, error (with retry), and
+ * empty states are all rendered per the coding rules.
  */
 export default function SessionChatView({ sessionId }: SessionChatViewProps) {
   const [state, setState] = useState<LoadState>('loading');
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
-  const [nextCursor, setNextCursor] = useState<number | null>(null);
-  const [appending, setAppending] = useState(false);
+  const [prevCursor, setPrevCursor] = useState<number | null>(null);
+  const [prepending, setPrepending] = useState(false);
   // Guards against out-of-order responses and setState-after-unmount when
   // the sessionId changes mid-flight.
   const requestRef = useRef(0);
 
-  // First page (mount / session switch / retry): replaces the list wholesale.
-  const loadFirstPage = useCallback(() => {
+  // Newest page (mount / session switch / retry): replaces the list.
+  const loadLatest = useCallback(() => {
     const requestId = ++requestRef.current;
     setState('loading');
     setError(null);
-    fetchSessionMessages(sessionId)
+    fetchLatestMessages(sessionId)
       .then((page) => {
         if (requestRef.current !== requestId) return;
         setMessages(page.items);
-        setNextCursor(page.next_cursor);
+        setPrevCursor(page.prev_cursor);
         setState('ready');
       })
       .catch((err: unknown) => {
@@ -58,29 +58,29 @@ export default function SessionChatView({ sessionId }: SessionChatViewProps) {
 
   useEffect(() => {
     setMessages([]);
-    setNextCursor(null);
-    loadFirstPage();
-  }, [loadFirstPage]);
+    setPrevCursor(null);
+    loadLatest();
+  }, [loadLatest]);
 
-  const loadNewer = useCallback(async () => {
-    if (nextCursor === null || appending) return;
-    setAppending(true);
+  // Older page: prepends above the current window; the newest messages
+  // stay anchored at the bottom.
+  const loadOlder = useCallback(async () => {
+    if (prevCursor === null || prepending) return;
+    setPrepending(true);
     const requestId = requestRef.current;
     try {
-      const page = await fetchSessionMessages(sessionId, nextCursor);
+      const page = await fetchOlderMessages(sessionId, prevCursor);
       // sessionId changed (or a reload started) while the page was in
       // flight — dropping it keeps the list consistent with its cursor.
       if (requestRef.current !== requestId) return;
-      setMessages((prev) => [...prev, ...page.items]);
-      setNextCursor(page.next_cursor);
+      setMessages((prev) => [...page.items, ...prev]);
+      setPrevCursor(page.prev_cursor);
     } catch (err) {
       setError(describeError(err));
     } finally {
-      setAppending(false);
+      setPrepending(false);
     }
-  }, [sessionId, nextCursor, appending]);
-
-  const retry = loadFirstPage;
+  }, [sessionId, prevCursor, prepending]);
 
   if (state === 'loading') {
     return (
@@ -94,7 +94,7 @@ export default function SessionChatView({ sessionId }: SessionChatViewProps) {
     return (
       <div className={styles.errorBox}>
         <p role="alert">{error}</p>
-        <Button variant="secondary" size="sm" onClick={retry}>
+        <Button variant="secondary" size="sm" onClick={loadLatest}>
           Retry
         </Button>
       </div>
@@ -103,19 +103,19 @@ export default function SessionChatView({ sessionId }: SessionChatViewProps) {
 
   return (
     <div className={styles.container}>
+      {prevCursor !== null && (
+        <div className={styles.loadMore}>
+          <Button variant="ghost" size="sm" onClick={loadOlder} disabled={prepending}>
+            {prepending ? 'Loading…' : 'Load older messages'}
+          </Button>
+        </div>
+      )}
       {error && (
         <p className={styles.inlineError} role="alert">
           {error}
         </p>
       )}
       <MessageList messages={messages} />
-      {nextCursor !== null && (
-        <div className={styles.loadMore}>
-          <Button variant="ghost" size="sm" onClick={loadNewer} disabled={appending}>
-            {appending ? 'Loading…' : 'Load newer messages'}
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

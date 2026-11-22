@@ -650,3 +650,104 @@ async def test_message_page_never_commits(
             "s_1", after_seq=0, limit=10
         )
         assert len(rows) == 1
+
+
+# -- list_message_page_before (issue #43) -------------------------------------------
+
+
+async def _seed_five_messages(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """s_1 owned by u_1 with user/assistant messages at seq 1..5."""
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        for i in range(1, 6):
+            kind = (
+                EventKind.USER_MESSAGE
+                if i % 2
+                else EventKind.ASSISTANT_MESSAGE
+            )
+            await _append(session, "s_1", kind, f"m{i}", author="p_1")
+        await session.commit()
+
+
+async def test_message_page_before_none_returns_newest_desc(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Unbounded upper edge: the newest `limit` rows, seq DESC (chat-open)."""
+    await _seed_five_messages(session_factory)
+    async with session_factory() as session:
+        rows = await SessionStore(session).list_message_page_before(
+            "s_1", before_seq=None, limit=2
+        )
+        assert [r.seq for r in rows] == [5, 4]
+        assert [r.content for r in rows] == ["m5", "m4"]
+
+
+async def test_message_page_before_seq_excludes_upper_window(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """seq >= before_seq never appears; older rows come back DESC."""
+    await _seed_five_messages(session_factory)
+    async with session_factory() as session:
+        rows = await SessionStore(session).list_message_page_before(
+            "s_1", before_seq=4, limit=10
+        )
+        assert [r.seq for r in rows] == [3, 2, 1]
+
+
+async def test_message_page_before_filters_kinds(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Non-message kinds are excluded, same filter as the forward page."""
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        await _append(session, "s_1", EventKind.USER_MESSAGE, "hi", author="p_1")
+        await _append(session, "s_1", EventKind.SYSTEM, "notice")
+        await _append(
+            session, "s_1", EventKind.ASSISTANT_MESSAGE, "hello", author="p_1"
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        rows = await SessionStore(session).list_message_page_before(
+            "s_1", before_seq=None, limit=10
+        )
+        assert [(r.seq, r.kind) for r in rows] == [
+            (3, "assistant_message"),
+            (1, "user_message"),
+        ]
+
+
+async def test_message_page_before_walk_terminates(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Backward cursor walk: pages cover the transcript without overlap and
+    the final page under-fills."""
+    await _seed_five_messages(session_factory)
+    async with session_factory() as session:
+        store = SessionStore(session)
+        page1 = await store.list_message_page_before("s_1", before_seq=None, limit=2)
+        assert [r.seq for r in page1] == [5, 4]
+        page2 = await store.list_message_page_before(
+            "s_1", before_seq=page1[-1].seq, limit=2
+        )
+        assert [r.seq for r in page2] == [3, 2]
+        page3 = await store.list_message_page_before(
+            "s_1", before_seq=page2[-1].seq, limit=2
+        )
+        assert [r.seq for r in page3] == [1]
+        page4 = await store.list_message_page_before(
+            "s_1", before_seq=page3[-1].seq, limit=2
+        )
+        assert page4 == []

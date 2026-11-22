@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Octave Chat Message List — Preview (issue #43, as implemented)</title>
+<style>
+  /* Mirrors frontend/src/index.css design tokens */
+  :root {
+    --color-bg: #1a1a2e;
+    --color-bg-deep: #14142a;
+    --color-panel: #1f1f38;
+    --color-border: #2e2e4e;
+    --color-text: #eaeaea;
+    --color-text-dim: #a0a0b8;
+    --color-accent: #8b7cf6;
+    --color-accent-soft: rgba(139, 124, 246, 0.14);
+    --color-ok: #4ade80;
+    --color-err: #f87171;
+    --radius-pill: 999px;
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px;
+    --font-sm: 0.8rem; --font-md: 0.9rem; --font-lg: 1.05rem;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0e0e1c;
+    color: var(--color-text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 32px 24px 64px;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  .page-sub { color: var(--color-text-dim); font-size: 0.85rem; margin-bottom: 28px; max-width: 780px; }
+  .variant { margin-bottom: 40px; }
+  .variant-label { font-size: 0.8rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--color-accent); margin-bottom: 6px; }
+  .variant-desc { color: var(--color-text-dim); font-size: 0.85rem; margin-bottom: 12px; max-width: 780px; }
+
+  /* The app shell, as shipped (sidebar + top bar + content) */
+  .frame {
+    max-width: 900px;
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    background: var(--color-bg);
+    box-shadow: 0 8px 30px rgba(0,0,0,0.45);
+    height: 460px;
+  }
+  .sidebar {
+    width: 170px; flex-shrink: 0;
+    background: var(--color-bg-deep);
+    border-right: 1px solid var(--color-border);
+    display: flex; flex-direction: column;
+    padding: 16px 10px;
+  }
+  .brand { display: flex; align-items: center; gap: 9px; padding: 4px 10px 18px; font-weight: 700; font-size: 1rem; }
+  .brand .mark {
+    width: 26px; height: 26px; border-radius: 7px;
+    background: linear-gradient(135deg, var(--color-accent), #5a4fcf);
+    display: grid; place-items: center; font-size: 15px; color: #fff; font-weight: 800;
+  }
+  .nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 7px;
+    color: var(--color-text-dim); font-size: 0.88rem; border-left: 3px solid transparent;
+  }
+  .nav-item.active { background: var(--color-accent-soft); color: var(--color-text); border-left-color: var(--color-accent); font-weight: 600; }
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .topbar {
+    height: 46px; flex-shrink: 0; border-bottom: 1px solid var(--color-border);
+    display: flex; align-items: center; padding: 0 18px; background: var(--color-panel);
+    font-size: 0.95rem; font-weight: 600;
+  }
+  .topbar .crumb { margin-left: auto; font-size: 0.72rem; color: var(--color-text-dim); font-weight: 400; }
+  .content { flex: 1; overflow: auto; padding: var(--space-5); }
+  .chat-col { max-width: 640px; }
+
+  /* MessageList styles, copied from MessageList.module.css */
+  .list { list-style: none; display: flex; flex-direction: column; }
+  .row { display: flex; gap: var(--space-3); padding: var(--space-3) var(--space-2); }
+  .row + .row { border-top: 1px solid var(--color-border); }
+  .avatar {
+    width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+    display: grid; place-items: center; font-size: var(--font-sm); font-weight: 700; color: #fff;
+    user-select: none;
+  }
+  .avatarUser { background: #3f3f66; }
+  .avatarAgent { background: linear-gradient(135deg, var(--color-accent), #5a4fcf); }
+  .body { min-width: 0; flex: 1; }
+  .header { display: flex; align-items: baseline; gap: var(--space-2); margin-bottom: 2px; }
+  .author { font-weight: 600; font-size: var(--font-md); color: var(--color-text); }
+  .agentRow .author { color: var(--color-accent); }
+  .badge {
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    font-size: 0.62rem; font-weight: 600; line-height: 1; padding: 4px var(--space-2);
+    border-radius: var(--radius-pill); border: 1px solid transparent; white-space: nowrap;
+    letter-spacing: 0.05em; text-transform: uppercase;
+  }
+  .badge.neutral { background: var(--color-bg-deep); border-color: var(--color-border); color: var(--color-text-dim); }
+  .badge.accent { background: var(--color-accent-soft); color: var(--color-accent); }
+  .timestamp { font-size: var(--font-sm); color: var(--color-text-dim); font-variant-numeric: tabular-nums; }
+  .content-text { font-size: var(--font-md); line-height: 1.5; color: var(--color-text); overflow-wrap: break-word; white-space: pre-wrap; }
+
+  .loadMore { display: flex; justify-content: center; padding: var(--space-4) 0; }
+  .btn-ghost {
+    background: transparent; border: 1px solid var(--color-border); color: var(--color-text-dim);
+    font-size: 0.8rem; padding: 6px 14px; border-radius: 7px; cursor: pointer;
+  }
+  .state-card {
+    max-width: 900px; border: 1px dashed var(--color-border); border-radius: 9px;
+    padding: 18px; text-align: center; color: var(--color-text-dim); font-size: 0.85rem;
+    margin-bottom: 12px; background: var(--color-bg);
+  }
+  .state-card .kicker { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-accent); margin-bottom: 6px; }
+  .state-card.error { color: var(--color-err); }
+</style>
+</head>
+<body>
+  <h1>Chat Message List — as implemented</h1>
+  <p class="page-sub">Preview of commit <code>fe952eb</code> on <code>feature/chat-message-display</code>. The transcript view renders at <code>/sessions/<session-id></code> inside the existing app shell. This page reproduces the shipped component styles 1:1 from <code>MessageList.module.css</code> and the token set in <code>index.css</code>.</p>
+
+  <div class="variant">
+    <div class="variant-label">Ready state — populated transcript</div>
+    <p class="variant-desc">Opens at the NEWEST page. Each row: avatar (initials), author, explicit role badge (You = neutral, Agent = accent), clock time (full date on hover), content. Rows separated by hairlines; agent author name is accent-colored. "Load older messages" (top) prepends earlier pages; newest stay anchored at the bottom.</p>
+    <div class="frame">
+      <div class="sidebar">
+        <div class="brand"><span class="mark">◈</span>Octave</div>
+        <div class="nav">
+          <div class="nav-item active">▤ Sessions</div>
+          <div class="nav-item">▦ Vault</div>
+          <div class="nav-item">◧ MCP</div>
+          <div class="nav-item">◉ Agents</div>
+          <div class="nav-item">⚙ Settings</div>
+        </div>
+      </div>
+      <div class="main">
+        <div class="topbar">Sessions <span class="crumb">/sessions/0f3a9c21</span></div>
+        <div class="content">
+          <div class="chat-col">
+            <div class="loadMore"><button class="btn-ghost">Load older messages</button></div>
+            <ol class="list">
+              <li class="row">
+                <span class="avatar avatarUser">AL</span>
+                <div class="body">
+                  <div class="header">
+                    <span class="author">Alice</span>
+                    <span class="badge neutral">You</span>
+                    <time class="timestamp" title="Nov 22, 2026, 2:02 PM">14:02</time>
+                  </div>
+                  <div class="content-text">Can you summarize what's on my calendar tomorrow?</div>
+                </div>
+              </li>
+              <li class="row agentRow">
+                <span class="avatar avatarAgent">OC</span>
+                <div class="body">
+                  <div class="header">
+                    <span class="author">Octave</span>
+                    <span class="badge accent">Agent</span>
+                    <time class="timestamp" title="Nov 22, 2026, 2:02 PM">14:02</time>
+                  </div>
+                  <div class="content-text">Tomorrow you have two items: a standup at 09:30 and a dentist appointment at 15:00.
+
+Want me to block focus time around them?</div>
+                </div>
+              </li>
+              <li class="row">
+                <span class="avatar avatarUser">AL</span>
+                <div class="body">
+                  <div class="header">
+                    <span class="author">Alice</span>
+                    <span class="badge neutral">You</span>
+                    <time class="timestamp" title="Nov 22, 2026, 2:05 PM">14:05</time>
+                  </div>
+                  <div class="content-text">Yes, block 10:00–12:00. Long multiline responses wrap cleanly and preserve line breaks like this one does.</div>
+                </div>
+              </li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="variant">
+    <div class="variant-label">Other states (rendered in the content area)</div>
+    <div class="state-card"><div class="kicker">Loading</div>Loading transcript…</div>
+    <div class="state-card"><div class="kicker">Empty session</div>No messages yet — the conversation will appear here.</div>
+    <div class="state-card error"><div class="kicker">Error (403/404/network) + Retry button</div>⚠ You don't have access to this session.</div>
+  </div>
+</body>
+</html>

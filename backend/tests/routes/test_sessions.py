@@ -334,3 +334,160 @@ async def test_pagination_validation(app_and_factory) -> None:
             "/api/sessions?offset=-1",
         ):
             assert (await client.get(url)).status_code == 422, url
+
+
+async def _login(client: AsyncClient, username: str) -> None:
+    response = await client.post(
+        "/api/auth/login", json={"username": username, "password": "pw"}
+    )
+    assert response.status_code == 200
+
+
+async def _create_member(owner: AsyncClient, name: str) -> str:
+    """Owner (bootstrapped alice) creates a member account; returns the
+    member's user id."""
+    created = await owner.post(
+        "/api/auth/users",
+        json={"username": name, "password": "pw", "display_name": name.title()},
+    )
+    assert created.status_code == 201
+    return created.json()["id"]
+
+
+# -- GET /sessions/{id}/messages (issue #151) ------------------------------------
+
+
+async def test_messages_requires_auth(app_and_factory) -> None:
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        response = await client.get("/api/sessions/whatever/messages")
+        assert response.status_code == 401
+
+
+async def test_messages_unknown_session_404(app_and_factory) -> None:
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        response = await client.get("/api/sessions/nope/messages")
+        assert response.status_code == 404
+
+
+async def test_messages_non_member_403(app_and_factory) -> None:
+    """A session that exists but the caller neither owns nor joined."""
+    app, factory = app_and_factory
+    async with await _client(app) as owner:
+        await _bootstrap(owner)  # alice
+        await _create_member(owner, "bob")
+        session_id = (await owner.post("/api/sessions", json={})).json()["id"]
+        bob = await _client(app)
+        await _login(bob, "bob")
+        response = await bob.get(f"/api/sessions/{session_id}/messages")
+        assert response.status_code == 403
+
+
+async def test_messages_joined_non_owner_200(app_and_factory) -> None:
+    """Membership (not ownership) grants reads — the WS-join axis."""
+    app, factory = app_and_factory
+    async with await _client(app) as owner:
+        await _bootstrap(owner)
+        bob_id = await _create_member(owner, "bob")
+        session_id = (await owner.post("/api/sessions", json={})).json()["id"]
+        bob_pid = await _participant_id(factory, bob_id)
+    async with factory() as db:
+        db.add(SessionParticipant(session_id=session_id, participant_id=bob_pid))
+        await db.commit()
+    async with await _client(app) as bob:
+        await _login(bob, "bob")
+        response = await bob.get(f"/api/sessions/{session_id}/messages")
+        assert response.status_code == 200
+
+
+async def test_messages_returns_transcript_with_labels(app_and_factory) -> None:
+    """Owner reads their transcript: ordered items, author labels,
+    non-message kinds excluded, timestamps present."""
+    app, factory = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        me = (await client.get("/api/auth/me")).json()
+        session_id = (await client.post("/api/sessions", json={})).json()["id"]
+        alice = await _participant_id(factory, me["id"])
+    await _seed_activity(
+        factory,
+        session_id,
+        [
+            (EventKind.USER_MESSAGE, "hi", _dt(5)),
+            (EventKind.TOOL_CALL, "tool", _dt(6)),
+            (EventKind.ASSISTANT_MESSAGE, "hello", _dt(7)),
+        ],
+        author=alice,
+    )
+    async with await _client(app) as client:
+        await _bootstrap_login(client)
+        body = (await client.get(f"/api/sessions/{session_id}/messages")).json()
+    assert [item["kind"] for item in body["items"]] == [
+        "user_message",
+        "assistant_message",
+    ]
+    assert [item["seq"] for item in body["items"]] == [1, 3]
+    assert [item["content"] for item in body["items"]] == ["hi", "hello"]
+    assert [item["author"] for item in body["items"]] == ["Alice", "Alice"]
+    assert body["items"][0]["timestamp"].startswith("2026-01-05")
+    assert body["next_cursor"] is None
+
+
+async def test_messages_empty_session(app_and_factory) -> None:
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        session_id = (await client.post("/api/sessions", json={})).json()["id"]
+        body = (await client.get(f"/api/sessions/{session_id}/messages")).json()
+        assert body == {"items": [], "next_cursor": None}
+
+
+async def test_messages_pagination_walk(app_and_factory) -> None:
+    """limit=2 over 3 messages: page 1 carries next_cursor = last seq; the
+    walk ends with next_cursor null."""
+    app, factory = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        me = (await client.get("/api/auth/me")).json()
+        session_id = (await client.post("/api/sessions", json={})).json()["id"]
+        alice = await _participant_id(factory, me["id"])
+    await _seed_activity(
+        factory,
+        session_id,
+        [
+            (EventKind.USER_MESSAGE, "m1", _dt(1)),
+            (EventKind.ASSISTANT_MESSAGE, "m2", _dt(2)),
+            (EventKind.USER_MESSAGE, "m3", _dt(3)),
+        ],
+        author=alice,
+    )
+    async with await _client(app) as client:
+        await _bootstrap_login(client)
+        page1 = (
+            await client.get(f"/api/sessions/{session_id}/messages?limit=2")
+        ).json()
+        assert [i["seq"] for i in page1["items"]] == [1, 2]
+        assert page1["next_cursor"] == 2
+
+        page2 = (
+            await client.get(
+                f"/api/sessions/{session_id}/messages?limit=2&cursor=2"
+            )
+        ).json()
+        assert [i["seq"] for i in page2["items"]] == [3]
+        assert page2["next_cursor"] is None
+
+
+async def test_messages_pagination_validation(app_and_factory) -> None:
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        session_id = (await client.post("/api/sessions", json={})).json()["id"]
+        for url in (
+            f"/api/sessions/{session_id}/messages?limit=0",
+            f"/api/sessions/{session_id}/messages?limit=201",
+            f"/api/sessions/{session_id}/messages?cursor=-1",
+        ):
+            assert (await client.get(url)).status_code == 422, url

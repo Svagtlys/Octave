@@ -12,7 +12,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from octave.db.event_store import EventStore
-from octave.db.models import Event, Participant, Session, SessionParticipant, User
+from octave.db.models import (
+    Agent,
+    Event,
+    Participant,
+    Session,
+    SessionParticipant,
+    User,
+)
 from octave.db.session_store import SessionStore
 from octave.db.types import EventKind
 
@@ -356,3 +363,128 @@ async def test_pagination_slices_and_total(
         )
         assert beyond == []
         assert total3 == 3
+
+
+# -- resolve_access (issue #151) --------------------------------------------------
+
+
+async def _seed_agent_participant(
+    session: AsyncSession, *, agent_id: str, participant_id: str, label: str
+) -> None:
+    session.add(Agent(id=agent_id, name=label))
+    session.add(Participant(id=participant_id, agent_id=agent_id, label=label))
+    await session.flush()
+
+
+async def test_resolve_access_owner_granted(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        session.add(SessionParticipant(session_id="s_1", participant_id="p_1"))
+        await session.commit()
+
+    async with session_factory() as session:
+        verdict = await SessionStore(session).resolve_access("s_1", "u_1")
+        assert verdict == "granted"
+
+
+async def test_resolve_access_live_member_granted(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A non-owner with a current (left_at NULL) membership is granted."""
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _seed_user(
+            session, user_id="u_2", participant_id="p_2", display_name="Bob"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        session.add(SessionParticipant(session_id="s_1", participant_id="p_2"))
+        await session.commit()
+
+    async with session_factory() as session:
+        verdict = await SessionStore(session).resolve_access("s_1", "u_2")
+        assert verdict == "granted"
+
+
+async def test_resolve_access_left_member_denied(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _seed_user(
+            session, user_id="u_2", participant_id="p_2", display_name="Bob"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        session.add(
+            SessionParticipant(
+                session_id="s_1", participant_id="p_2", left_at=_dt(3)
+            )
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        verdict = await SessionStore(session).resolve_access("s_1", "u_2")
+        assert verdict == "denied"
+
+
+async def test_resolve_access_stranger_denied(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _seed_user(
+            session, user_id="u_2", participant_id="p_2", display_name="Bob"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        verdict = await SessionStore(session).resolve_access("s_1", "u_2")
+        assert verdict == "denied"
+
+
+async def test_resolve_access_missing_session(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        verdict = await SessionStore(session).resolve_access(
+            "s_ghost", "u_1"
+        )
+        assert verdict == "missing"
+
+
+async def test_resolve_access_owner_without_membership_still_granted(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The owner axis is independent of membership rows (the #121 create path
+    always writes one, but the guard must not depend on it)."""
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        await session.commit()  # no SessionParticipant row
+
+    async with session_factory() as session:
+        verdict = await SessionStore(session).resolve_access("s_1", "u_1")
+        assert verdict == "granted"

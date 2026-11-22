@@ -16,7 +16,7 @@ without ``GROUP BY``; the preview subquery rides the unique index
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,9 +24,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from octave.db.models import Event, Participant, Session, SessionParticipant
 from octave.db.types import EventKind
 
-__all__ = ["SessionActivityRow", "SessionStore"]
+__all__ = [
+    "AccessVerdict",
+    "SessionActivityRow",
+    "SessionStore",
+]
 
 _MESSAGE_KINDS = (str(EventKind.USER_MESSAGE), str(EventKind.ASSISTANT_MESSAGE))
+
+AccessVerdict = Literal["missing", "denied", "granted"]
+"""Session-read access outcome (issue #151). `granted` = owner or current
+participant (mirrors the WS join guard); `denied` = session exists but the
+caller holds neither; `missing` = no such session. The route maps verdicts
+to HTTP (404/403); the store stays HTTP-agnostic."""
 
 
 @dataclass(frozen=True)
@@ -140,3 +150,30 @@ class SessionStore:
                 )
             )
         return items, int(total or 0)
+
+    async def resolve_access(self, session_id: str, user_id: str) -> AccessVerdict:
+        """Owner (``created_by_user_id``) or live participant (``left_at IS
+        NULL``) -> ``granted``; session row absent -> ``missing``; else
+        ``denied``. Mirrors the WS join guard (``_may_join``)."""
+        owner = await self._session.scalar(
+            select(Session.id).where(
+                Session.id == session_id, Session.created_by_user_id == user_id
+            )
+        )
+        if owner is not None:
+            return "granted"
+        participant = await self._session.scalar(
+            select(SessionParticipant.session_id)
+            .join(Participant, Participant.id == SessionParticipant.participant_id)
+            .where(
+                SessionParticipant.session_id == session_id,
+                Participant.user_id == user_id,
+                SessionParticipant.left_at.is_(None),
+            )
+        )
+        if participant is not None:
+            return "granted"
+        exists = await self._session.scalar(
+            select(Session.id).where(Session.id == session_id)
+        )
+        return "missing" if exists is None else "denied"

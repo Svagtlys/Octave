@@ -334,3 +334,69 @@ async def test_pagination_validation(app_and_factory) -> None:
             "/api/sessions?offset=-1",
         ):
             assert (await client.get(url)).status_code == 422, url
+
+
+async def _login(client: AsyncClient, username: str) -> None:
+    response = await client.post(
+        "/api/auth/login", json={"username": username, "password": "pw"}
+    )
+    assert response.status_code == 200
+
+
+async def _create_member(owner: AsyncClient, name: str) -> str:
+    """Owner (bootstrapped alice) creates a member account; returns the
+    member's user id."""
+    created = await owner.post(
+        "/api/auth/users",
+        json={"username": name, "password": "pw", "display_name": name.title()},
+    )
+    assert created.status_code == 201
+    return created.json()["id"]
+
+
+# -- GET /sessions/{id}/messages (issue #151) ------------------------------------
+
+
+async def test_messages_requires_auth(app_and_factory) -> None:
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        response = await client.get("/api/sessions/whatever/messages")
+        assert response.status_code == 401
+
+
+async def test_messages_unknown_session_404(app_and_factory) -> None:
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        response = await client.get("/api/sessions/nope/messages")
+        assert response.status_code == 404
+
+
+async def test_messages_non_member_403(app_and_factory) -> None:
+    """A session that exists but the caller neither owns nor joined."""
+    app, factory = app_and_factory
+    async with await _client(app) as owner:
+        await _bootstrap(owner)  # alice
+        await _create_member(owner, "bob")
+        session_id = (await owner.post("/api/sessions", json={})).json()["id"]
+        bob = await _client(app)
+        await _login(bob, "bob")
+        response = await bob.get(f"/api/sessions/{session_id}/messages")
+        assert response.status_code == 403
+
+
+async def test_messages_joined_non_owner_200(app_and_factory) -> None:
+    """Membership (not ownership) grants reads — the WS-join axis."""
+    app, factory = app_and_factory
+    async with await _client(app) as owner:
+        await _bootstrap(owner)
+        bob_id = await _create_member(owner, "bob")
+        session_id = (await owner.post("/api/sessions", json={})).json()["id"]
+        bob_pid = await _participant_id(factory, bob_id)
+    async with factory() as db:
+        db.add(SessionParticipant(session_id=session_id, participant_id=bob_pid))
+        await db.commit()
+    async with await _client(app) as bob:
+        await _login(bob, "bob")
+        response = await bob.get(f"/api/sessions/{session_id}/messages")
+        assert response.status_code == 200

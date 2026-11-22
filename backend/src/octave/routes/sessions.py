@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,6 +46,19 @@ class SessionListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class TranscriptMessageResponse(BaseModel):
+    seq: int
+    kind: str
+    author: str | None
+    content: str | None
+    timestamp: datetime
+
+
+class TranscriptListResponse(BaseModel):
+    items: list[TranscriptMessageResponse]
+    next_cursor: int | None
 
 
 def _preview(content: str | None) -> str | None:
@@ -120,3 +133,40 @@ async def list_sessions(
         limit=limit,
         offset=offset,
     )
+
+
+@router.get("/{session_id}/messages")
+async def list_session_messages(
+    session_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+    session: AsyncSession = Depends(get_db_session),
+    cursor: int | None = Query(None, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+) -> TranscriptListResponse:
+    """Session transcript page: ``user_message``/``assistant_message``
+    events oldest-first, cursor-paginated by ``seq`` (``next_cursor`` null
+    terminates, #99 convention). Access: owner or current participant —
+    404 unknown session, 403 forbidden (mirrors the WS join guard)."""
+    store = SessionStore(session)
+    verdict = await store.resolve_access(session_id, user.id)
+    if verdict == "missing":
+        raise HTTPException(status_code=404, detail="Session not found")
+    if verdict == "denied":
+        raise HTTPException(status_code=403, detail="Not a member of this session")
+    rows = await store.list_message_page(
+        session_id, after_seq=cursor or 0, limit=limit + 1
+    )
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    items = [
+        TranscriptMessageResponse(
+            seq=row.seq,
+            kind=row.kind,
+            author=row.author_label,
+            content=row.content,
+            timestamp=row.created_at,
+        )
+        for row in page
+    ]
+    next_cursor = page[-1].seq if has_more else None
+    return TranscriptListResponse(items=items, next_cursor=next_cursor)

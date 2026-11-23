@@ -9,7 +9,7 @@ Never commits (router convention). is_error is read back from the loop's
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import select
@@ -96,7 +96,9 @@ class DefaultTurnRunner:
             )
         return resolved.model
 
-    async def _record_bracket(self, instance: RunningAgent, appended) -> None:
+    async def _record_bracket(
+        self, instance: RunningAgent, appended: Sequence[Message]
+    ) -> None:
         """Record tool events in the turn bracket. The final assistant
         message (no tool_calls) is skipped — the router records it."""
         author = await self._session.scalar(

@@ -92,7 +92,10 @@ async def test_plain_reply_injects_context_once(
     assert [k for k, _ in events] == ["context_injection"]
     # Second turn: injection short-circuits (idempotent session-start).
     await _run(
-        session_factory, ScriptedAdapter([final_result("again")]), FakeRegistry(), instance_id
+        session_factory,
+        ScriptedAdapter([final_result("again")]),
+        FakeRegistry(),
+        instance_id,
     )
     events = await _kinds(session_factory)
     assert [k for k, _ in events] == ["context_injection"]

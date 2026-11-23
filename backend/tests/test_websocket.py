@@ -21,13 +21,20 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from octave.agent import AgentInstanceManager
+from octave.agent.composition import (
+    build_message_router,  # noqa: F401  (documented surface)
+)
 from octave.auth.config import AuthSettings
 from octave.auth.passwords import DummyHasher
 from octave.auth.service import AuthService
 from octave.auth.store import AuthStore
 from octave.db._bootstrap import create_sqlite_engine
-from octave.db.models import Base, Participant, Session, SessionParticipant
+from octave.db.models import Agent, Base, Participant, Session, SessionParticipant
+from octave.inference.types import Message  # noqa: F401
 from octave.websocket.connection import router as ws_router
+from tests.agent.fakes import ScriptedAdapter, final_result, tool_call, tool_result
+from tests.agent.test_turn_runner import FakeRegistry
 
 
 def _make_app(tmp_path: Path) -> FastAPI:
@@ -129,13 +136,6 @@ def test_join_foreign_session_closes_4403(ws_client: TestClient) -> None:
 
 
 # --- user_message flow (issue #60) -------------------------------------
-
-from octave.agent import AgentInstanceManager
-from octave.agent.composition import build_message_router  # noqa: F401  (documented surface)
-from octave.db.models import Agent
-from octave.inference.types import Message  # noqa: F401
-from tests.agent.fakes import ScriptedAdapter, final_result, tool_call, tool_result
-from tests.agent.test_turn_runner import FakeRegistry
 
 _FAKE_BINDING = {"kind": "explicit", "adapter": "fake", "model": "mock-model"}
 

@@ -14,8 +14,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from octave.inference.registry import default_registry
 from octave.inference.config import InferenceSettings
+from octave.inference.registry import default_registry
 
 __all__ = ["inference_lifespan"]
 

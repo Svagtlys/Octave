@@ -7,6 +7,7 @@ components ship here as additional modules: instance lifecycle
 (#25), registry (#26), message routing (#27). Scheduling (#6) remains.
 """
 
+from octave.agent.composition import build_message_router
 from octave.agent.decider import (
     Candidate,
     Decision,
@@ -50,6 +51,7 @@ from octave.agent.summaries import (
     SummaryContext,
     TranscriptDigest,
 )
+from octave.agent.turn_runner import DefaultTurnRunner
 from octave.agent.types import ToolOutcome, ToolTurn
 from octave.tools.errors import ToolError
 
@@ -63,6 +65,7 @@ __all__ = [
     "DeciderChoiceError",
     "Decision",
     "DecisionState",
+    "DefaultTurnRunner",
     "HeadTailDigest",
     "InstanceExistsError",
     "InstanceNotFoundError",
@@ -94,5 +97,6 @@ __all__ = [
     "TurnInProgressError",
     "TurnRecord",
     "TurnRunner",
+    "build_message_router",
     "resolve_model",
 ]

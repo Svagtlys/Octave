@@ -36,6 +36,7 @@ def test_public_names_are_exported() -> None:
         "DeciderChoiceError",
         "Decision",
         "DecisionState",
+        "DefaultTurnRunner",
         "HeadTailDigest",
         "InstanceExistsError",
         "InstanceNotFoundError",
@@ -67,6 +68,7 @@ def test_public_names_are_exported() -> None:
         "TurnInProgressError",
         "TurnRecord",
         "TurnRunner",
+        "build_message_router",
         "resolve_model",
     ):
         assert hasattr(agent_pkg, name), name

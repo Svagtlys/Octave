@@ -31,6 +31,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import anyio
+import httpx
 from fastapi import FastAPI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -50,7 +51,12 @@ from octave.db.models import (
     SessionParticipant,
     User,
 )
-from octave.inference import AdapterConfig, InferenceSettings, default_registry
+from octave.inference import (
+    AdapterConfig,
+    InferenceAdapter,
+    InferenceSettings,
+    OpenAIAdapter,
+)
 from octave.mcp import McpServerManager, StdioConfig, ToolRegistry
 from octave.websocket.connection import router as ws_router
 
@@ -156,7 +162,12 @@ def build_app(directory: Path, args) -> FastAPI:
         await registry.start()
         await registry.refresh("fs")
 
-        adapter = default_registry.create(config)
+        # TLS seam (like smoke_agent_loop.py --ca-bundle): engines behind an
+        # internal CA need the OS store — certifi's bundle lacks it.
+        http_client = (
+            httpx.AsyncClient(verify=args.ca_bundle) if args.ca_bundle else None
+        )
+        adapter: InferenceAdapter = OpenAIAdapter(config, http_client=http_client)
 
         app.state.db_session_factory = factory
         app.state.auth_hasher = DummyHasher()
@@ -183,6 +194,14 @@ def main() -> None:
     parser.add_argument("--base-url", default=None)
     parser.add_argument("--model", default=None)
     parser.add_argument("--prompt", default=DEFAULT_PROMPT)
+    parser.add_argument(
+        "--ca-bundle",
+        default=None,
+        help=(
+            "CA bundle for TLS verification (default: certifi). "
+            "For internal CAs try /etc/ssl/certs/ca-certificates.crt"
+        ),
+    )
     args = parser.parse_args()
 
     directory = Path(tempfile.mkdtemp(prefix="octave-smoke-e2e-"))

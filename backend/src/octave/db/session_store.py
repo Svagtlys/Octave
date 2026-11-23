@@ -65,6 +65,20 @@ class TranscriptMessageRow:
     created_at: datetime
 
 
+def _to_transcript_row(row: Any) -> TranscriptMessageRow:
+    """Map a joined ``(seq, kind, label, payload, created_at)`` row; corrupt
+    payloads degrade to ``content=None`` (preview-subquery tolerance)."""
+    raw: Any = row.payload
+    content = raw.get("content") if isinstance(raw, dict) else None
+    return TranscriptMessageRow(
+        seq=row.seq,
+        kind=row.kind,
+        author_label=row.label,
+        content=content,
+        created_at=row.created_at,
+    )
+
+
 class SessionStore:
     """Session create/list queries. Never commits."""
 
@@ -216,17 +230,34 @@ class SessionStore:
             .order_by(Event.seq)
             .limit(limit)
         )
-        items: list[TranscriptMessageRow] = []
-        for row in rows:
-            raw: Any = row.payload
-            content = raw.get("content") if isinstance(raw, dict) else None
-            items.append(
-                TranscriptMessageRow(
-                    seq=row.seq,
-                    kind=row.kind,
-                    author_label=row.label,
-                    content=content,
-                    created_at=row.created_at,
-                )
+        return [_to_transcript_row(row) for row in rows]
+
+    async def list_message_page_before(
+        self, session_id: str, *, before_seq: int | None, limit: int
+    ) -> list[TranscriptMessageRow]:
+        """Transcript window ``seq < before_seq`` (message kinds only;
+        ``None`` = unbounded), seq DESC, ``LIMIT limit`` — the newest-side
+        page for chat-open UX (issue #43). Rows come back DESC (newest
+        first); the route sorts for display. Over-fetch by one for a
+        has-more-older probe. LEFT JOIN participants for the label.
+        Never commits."""
+        query = (
+            select(
+                Event.seq,
+                Event.kind,
+                Participant.label,
+                Event.payload,
+                Event.created_at,
             )
-        return items
+            .outerjoin(Participant, Participant.id == Event.author_participant_id)
+            .where(
+                Event.session_id == session_id,
+                Event.kind.in_(_MESSAGE_KINDS),
+            )
+            .order_by(Event.seq.desc())
+            .limit(limit)
+        )
+        if before_seq is not None:
+            query = query.where(Event.seq < before_seq)
+        rows = await self._session.execute(query)
+        return [_to_transcript_row(row) for row in rows]

@@ -441,7 +441,44 @@ async def test_messages_empty_session(app_and_factory) -> None:
         await _bootstrap(client)
         session_id = (await client.post("/api/sessions", json={})).json()["id"]
         body = (await client.get(f"/api/sessions/{session_id}/messages")).json()
-        assert body == {"items": [], "next_cursor": None}
+        assert body == {"items": [], "next_cursor": None, "prev_cursor": None}
+
+
+async def test_messages_end_returns_newest_page(app_and_factory) -> None:
+    """end=true over 3 messages with limit=2: the two newest, oldest-first
+    within the page, prev_cursor = oldest seq for the older page."""
+    app, factory = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        me = (await client.get("/api/auth/me")).json()
+        session_id = (await client.post("/api/sessions", json={})).json()["id"]
+        alice = await _participant_id(factory, me["id"])
+    await _seed_activity(
+        factory,
+        session_id,
+        [
+            (EventKind.USER_MESSAGE, "m1", _dt(1)),
+            (EventKind.ASSISTANT_MESSAGE, "m2", _dt(2)),
+            (EventKind.USER_MESSAGE, "m3", _dt(3)),
+        ],
+        author=alice,
+    )
+    async with await _client(app) as client:
+        await _bootstrap_login(client)
+        page = (
+            await client.get(f"/api/sessions/{session_id}/messages?end=true&limit=2")
+        ).json()
+        assert [i["seq"] for i in page["items"]] == [2, 3]
+        assert [i["content"] for i in page["items"]] == ["m2", "m3"]
+        assert page["prev_cursor"] == 2
+
+        older = (
+            await client.get(
+                f"/api/sessions/{session_id}/messages?before_seq=2&limit=2"
+            )
+        ).json()
+        assert [i["seq"] for i in older["items"]] == [1]
+        assert older["prev_cursor"] is None
 
 
 async def test_messages_pagination_walk(app_and_factory) -> None:
@@ -489,5 +526,9 @@ async def test_messages_pagination_validation(app_and_factory) -> None:
             f"/api/sessions/{session_id}/messages?limit=0",
             f"/api/sessions/{session_id}/messages?limit=201",
             f"/api/sessions/{session_id}/messages?cursor=-1",
+            f"/api/sessions/{session_id}/messages?before_seq=0",
+            f"/api/sessions/{session_id}/messages?cursor=1&before_seq=2",
+            f"/api/sessions/{session_id}/messages?cursor=1&end=true",
+            f"/api/sessions/{session_id}/messages?before_seq=2&end=true",
         ):
             assert (await client.get(url)).status_code == 422, url

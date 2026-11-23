@@ -20,7 +20,11 @@ from octave.auth.deps import get_current_user
 from octave.db.deps import get_db_session
 from octave.db.errors import OwnerParticipantMissingError
 from octave.db.models import User
-from octave.db.session_store import SessionActivityRow, SessionStore
+from octave.db.session_store import (
+    SessionActivityRow,
+    SessionStore,
+    TranscriptMessageRow,
+)
 
 __all__ = ["router"]
 
@@ -59,6 +63,10 @@ class TranscriptMessageResponse(BaseModel):
 class TranscriptListResponse(BaseModel):
     items: list[TranscriptMessageResponse]
     next_cursor: int | None
+    prev_cursor: int | None = None
+    """Backward-paging cursor (issue #43): echo the oldest ``seq`` returned
+    to fetch the page before it; ``null`` when no older messages exist.
+    Only set in ``before_seq``/``end`` mode."""
 
 
 def _preview(content: str | None) -> str | None:
@@ -141,32 +149,57 @@ async def list_session_messages(
     user: Annotated[User, Depends(get_current_user)],
     session: AsyncSession = Depends(get_db_session),
     cursor: int | None = Query(None, ge=0),
+    before_seq: int | None = Query(None, ge=1),
+    end: bool = Query(False),
     limit: int = Query(50, ge=1, le=200),
 ) -> TranscriptListResponse:
     """Session transcript page: ``user_message``/``assistant_message``
-    events oldest-first, cursor-paginated by ``seq`` (``next_cursor`` null
-    terminates, #99 convention). Access: owner or current participant —
+    events, cursor-paginated by ``seq`` (#99 convention). Default and
+    ``cursor`` mode: forward, oldest-first, ``next_cursor`` terminates.
+    ``end=true``: the newest page (chat-open, issue #43); ``before_seq=N``:
+    the page just below ``seq`` N — both render oldest-first within the
+    page and carry ``prev_cursor`` (null when no older messages remain).
+    Combining modes → 422. Access: owner or current participant —
     404 unknown session, 403 forbidden (mirrors the WS join guard)."""
+    modes = [x is not None for x in (cursor, before_seq)] + [end]
+    if sum(modes) > 1:
+        raise HTTPException(
+            status_code=422, detail="cursor, before_seq and end are mutually exclusive"
+        )
     store = SessionStore(session)
     verdict = await store.resolve_access(session_id, user.id)
     if verdict == "missing":
         raise HTTPException(status_code=404, detail="Session not found")
     if verdict == "denied":
         raise HTTPException(status_code=403, detail="Not a member of this session")
+
+    if end or before_seq is not None:
+        rows = await store.list_message_page_before(
+            session_id, before_seq=before_seq, limit=limit + 1
+        )
+        has_older = len(rows) > limit
+        page = sorted(rows[:limit], key=lambda row: row.seq)
+        items = [_to_message_response(row) for row in page]
+        prev_cursor = page[0].seq if has_older and page else None
+        return TranscriptListResponse(
+            items=items, next_cursor=None, prev_cursor=prev_cursor
+        )
+
     rows = await store.list_message_page(
         session_id, after_seq=cursor or 0, limit=limit + 1
     )
     has_more = len(rows) > limit
     page = rows[:limit]
-    items = [
-        TranscriptMessageResponse(
-            seq=row.seq,
-            kind=row.kind,
-            author=row.author_label,
-            content=row.content,
-            timestamp=row.created_at,
-        )
-        for row in page
-    ]
+    items = [_to_message_response(row) for row in page]
     next_cursor = page[-1].seq if has_more else None
     return TranscriptListResponse(items=items, next_cursor=next_cursor)
+
+
+def _to_message_response(row: TranscriptMessageRow) -> TranscriptMessageResponse:
+    return TranscriptMessageResponse(
+        seq=row.seq,
+        kind=row.kind,
+        author=row.author_label,
+        content=row.content,
+        timestamp=row.created_at,
+    )

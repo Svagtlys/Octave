@@ -26,3 +26,14 @@
   justify-content: center;
   padding: var(--space-4) 0;
 }
+
+.thinking {
+  color: var(--color-text-dim);
+  font-style: italic;
+  padding: var(--space-3) 0;
+}
+
+.disconnected {
+  color: var(--color-text-dim);
+  padding: var(--space-3) 0;
+}

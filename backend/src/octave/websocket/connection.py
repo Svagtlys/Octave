@@ -22,15 +22,20 @@ import json
 from collections.abc import Awaitable, Callable
 
 from fastapi import APIRouter, WebSocket
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from octave.agent.composition import build_message_router
+from octave.agent.router import StopReason
 from octave.auth.config import AuthSettings
 from octave.auth.deps import SESSION_COOKIE
 from octave.auth.passwords import Argon2Hasher
 from octave.auth.service import AuthService
 from octave.auth.store import AuthStore
-from octave.db.models import Session, SessionParticipant
+from octave.db.event_store import EventStore
+from octave.db.models import Event, Participant, Session, SessionParticipant
+from octave.db.session_store import SessionStore
+from octave.websocket.hub import get_hub
 
 router = APIRouter()
 
@@ -81,8 +86,6 @@ async def _may_join(user_id: str, session_id: str, websocket: WebSocket) -> bool
         if owner is not None:
             return True
         # Non-owner: must hold a live participant row (left_at NULL).
-        from octave.db.models import Participant
-
         participant = await db.scalar(
             select(SessionParticipant.session_id)
             .join(Participant, Participant.id == SessionParticipant.participant_id)
@@ -95,6 +98,84 @@ async def _may_join(user_id: str, session_id: str, websocket: WebSocket) -> bool
         return participant is not None
 
 
+async def _max_seq(db: AsyncSession, session_id: str) -> int:
+    row = await db.execute(
+        select(func.coalesce(func.max(Event.seq), 0)).where(
+            Event.session_id == session_id
+        )
+    )
+    return int(row.scalar_one())
+
+
+async def _labels(db: AsyncSession) -> dict[str, str]:
+    rows = await db.execute(select(Participant.id, Participant.label))
+    return {pid: label for pid, label in rows.all()}
+
+
+async def _handle_user_message(
+    websocket: WebSocket, user_id: str, session_id: str, content: str
+) -> None:
+    """One frame = one caller-owned transaction (WS scope convention):
+    deliver, commit, then broadcast everything the turn appended."""
+    app = websocket.app
+    adapter = getattr(app.state, "inference_adapter", None)
+    registry = getattr(app.state, "mcp_registry", None)
+    if adapter is None or registry is None:
+        await websocket.send_text(
+            json.dumps(
+                {"type": "error", "error": "request pipeline not configured"}
+            )
+        )
+        return
+    factory = app.state.db_session_factory
+    hub = get_hub(app)
+    async with factory() as db:
+        participant = await SessionStore(db).get_participant_for_user(user_id)
+        if participant is None:
+            await websocket.send_text(
+                json.dumps({"type": "error", "error": "no participant identity"})
+            )
+            return
+        pre_max = await _max_seq(db, session_id)
+        router = build_message_router(
+            db,
+            adapter=adapter,
+            tool_registry=registry,
+            adapter_name=getattr(app.state, "inference_adapter_name", None),
+        )
+        try:
+            outcome = await router.deliver(
+                session_id, author_participant_id=participant.id, content=content
+            )
+            await db.commit()
+        except Exception as exc:  # noqa: BLE001 — frame failures never kill the socket
+            await db.rollback()
+            await websocket.send_text(json.dumps({"type": "error", "error": str(exc)}))
+            return
+        new_events = await EventStore(db).read(session_id, after_seq=pre_max)
+        labels = await _labels(db)
+    for event in new_events:
+        await hub.broadcast(
+            session_id,
+            {
+                "type": "event",
+                "session_id": session_id,
+                "seq": event.seq,
+                "kind": event.kind,
+                "author": (
+                    labels.get(event.author_participant_id)
+                    if event.author_participant_id
+                    else None
+                ),
+                "content": event.payload.get("content"),
+            },
+        )
+    if outcome.stop_reason == StopReason.ERROR:
+        await websocket.send_text(
+            json.dumps({"type": "error", "error": outcome.error or "turn failed"})
+        )
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     user_id = await _resolve_identity(websocket)
@@ -103,6 +184,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         await websocket.close(code=4401)
         return
     await websocket.accept()
+    hub = get_hub(websocket.app)
+    joined: set[str] = set()
     try:
         while True:
             data = await websocket.receive_text()
@@ -112,9 +195,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if not await _may_join(user_id, session_id, websocket):
                     await websocket.close(code=4403)
                     return
+                hub.join(session_id, websocket)
+                joined.add(session_id)
                 await websocket.send_text(
                     json.dumps({"type": "joined", "session_id": session_id})
                 )
+                continue
+            if message.get("type") == "user_message":
+                session_id = message.get("session_id", "")
+                content = message.get("content", "")
+                if not await _may_join(user_id, session_id, websocket):
+                    await websocket.close(code=4403)
+                    return
+                await _handle_user_message(websocket, user_id, session_id, content)
                 continue
             response = {
                 "type": "pong",
@@ -123,3 +216,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             await websocket.send_text(json.dumps(response))
     except Exception:
         await websocket.close()
+    finally:
+        for session_id in joined:
+            hub.leave(session_id, websocket)

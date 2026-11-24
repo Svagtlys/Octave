@@ -63,6 +63,8 @@ class TranscriptMessageRow:
     author_label: str | None
     content: str | None
     created_at: datetime
+    thinking: str | None = None
+    """Dialect reasoning content on assistant rows (issue #45); None elsewhere."""
 
 
 def _to_transcript_row(row: Any) -> TranscriptMessageRow:
@@ -70,12 +72,14 @@ def _to_transcript_row(row: Any) -> TranscriptMessageRow:
     payloads degrade to ``content=None`` (preview-subquery tolerance)."""
     raw: Any = row.payload
     content = raw.get("content") if isinstance(raw, dict) else None
+    thinking = raw.get("thinking") if isinstance(raw, dict) else None
     return TranscriptMessageRow(
         seq=row.seq,
         kind=row.kind,
         author_label=row.label,
         content=content,
         created_at=row.created_at,
+        thinking=thinking,
     )
 
 

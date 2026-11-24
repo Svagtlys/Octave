@@ -435,6 +435,32 @@ async def test_messages_returns_transcript_with_labels(app_and_factory) -> None:
     assert body["next_cursor"] is None
 
 
+async def test_transcript_response_carries_thinking(app_and_factory) -> None:
+    """Assistant rows serve the persisted thinking field (issue #45)."""
+    app, factory = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        me = (await client.get("/api/auth/me")).json()
+        session_id = (await client.post("/api/sessions", json={})).json()["id"]
+        alice = await _participant_id(factory, me["id"])
+    async with factory() as session:
+        await EventStore(session).append(
+            session_id,
+            EventKind.ASSISTANT_MESSAGE,
+            author_participant_id=alice,
+            payload={"content": "answer", "thinking": "because"},
+        )
+        await session.commit()
+    async with await _client(app) as client:
+        await _bootstrap_login(client)
+        page = (
+            await client.get(f"/api/sessions/{session_id}/messages?end=true")
+        ).json()
+    item = page["items"][-1]
+    assert item["content"] == "answer"
+    assert item["thinking"] == "because"
+
+
 async def test_messages_empty_session(app_and_factory) -> None:
     app, _ = app_and_factory
     async with await _client(app) as client:

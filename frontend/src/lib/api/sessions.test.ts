@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchLatestMessages, fetchOlderMessages } from './sessions';
+import {
+  fetchLatestMessages,
+  fetchOlderMessages,
+  fetchSessions,
+  createSession,
+  deleteSession,
+} from './sessions';
 
 // Mock global fetch (same approach as client.test.ts): asserts the exact
 // URL each helper builds against the backend contract.
@@ -63,5 +69,92 @@ describe('fetchOlderMessages', () => {
   it('URL-encodes the session id', async () => {
     await fetchOlderMessages('a b', 7);
     expect(mockFetch.mock.calls[0][0]).toContain('/api/sessions/a%20b/messages');
+  });
+});
+
+const sessionsPage = JSON.stringify({
+  items: [
+    {
+      id: 's_1',
+      title: 'Trip planning',
+      created_at: '2026-11-24T10:00:00Z',
+      last_activity: '2026-11-24T12:00:00Z',
+      last_message: 'yes, lets go',
+    },
+  ],
+  total: 1,
+  limit: 50,
+  offset: 0,
+});
+
+describe('fetchSessions', () => {
+  it('requests the default page (limit 50, offset 0)', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, text: async () => sessionsPage });
+    const page = await fetchSessions();
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:8000/api/sessions?limit=50&offset=0',
+      expect.objectContaining({ method: 'GET', credentials: 'include' })
+    );
+    expect(page.items[0].id).toBe('s_1');
+    expect(page.total).toBe(1);
+  });
+
+  it('passes custom limit/offset', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, text: async () => sessionsPage });
+    await fetchSessions(10, 20);
+    expect(mockFetch.mock.calls[0][0]).toContain('limit=10&offset=20');
+  });
+});
+
+describe('createSession', () => {
+  it('POSTs with an explicit null title when omitted', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          id: 's_2',
+          title: null,
+          created_at: '2026-11-24T13:00:00Z',
+          last_activity: '2026-11-24T13:00:00Z',
+          last_message: null,
+        }),
+    });
+    const created = await createSession();
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:8000/api/sessions',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        body: JSON.stringify({ title: null }),
+      })
+    );
+    expect(created.id).toBe('s_2');
+  });
+
+  it('sends the title when provided', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, text: async () => sessionsPage });
+    await createSession('Groceries');
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({ title: 'Groceries' });
+  });
+});
+
+describe('deleteSession', () => {
+  it('DELETEs the encoded session path', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, text: async () => '' });
+    await deleteSession('a b/c');
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:8000/api/sessions/a%20b%2Fc',
+      expect.objectContaining({ method: 'DELETE', credentials: 'include' })
+    );
+  });
+
+  it('rejects with ApiError when the endpoint is missing (backend issue pending)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 405,
+      statusText: 'Method Not Allowed',
+      text: async () => '',
+    });
+    await expect(deleteSession('s_1')).rejects.toMatchObject({ status: 405 });
   });
 });

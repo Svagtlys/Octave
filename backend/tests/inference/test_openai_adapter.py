@@ -532,3 +532,131 @@ async def test_list_models_extracts_dialect_context_window() -> None:
         "bad-window": None,
         "str-window": None,
     }
+
+
+REASONING_STREAM_CHUNKS = [
+    {
+        "id": "c",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "r-model",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"role": "assistant", "reasoning_content": "Let me "},
+                "finish_reason": None,
+            }
+        ],
+    },
+    {
+        "id": "c",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "r-model",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"reasoning_content": "think."},
+                "finish_reason": None,
+            }
+        ],
+    },
+    {
+        "id": "c",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "r-model",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_1",
+                            "function": {"name": "read", "arguments": ""},
+                        }
+                    ]
+                },
+                "finish_reason": None,
+            }
+        ],
+    },
+    {
+        "id": "c",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "r-model",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {"index": 0, "function": {"arguments": '{"path": "x"}'}}
+                    ]
+                },
+                "finish_reason": None,
+            }
+        ],
+    },
+    {
+        "id": "c",
+        "object": "chat.completion.chunk",
+        "created": 1,
+        "model": "r-model",
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+    },
+]
+
+
+async def test_stream_extracts_thinking_and_tool_call_deltas() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            text=_sse(REASONING_STREAM_CHUNKS),
+            headers={"content-type": "text/event-stream"},
+        )
+
+    adapter = _adapter(_mock_client(handler))
+    chunks = [
+        chunk
+        async for chunk in adapter.stream(
+            CompletionRequest(messages=[Message(role="user", content="go")])
+        )
+    ]
+    thinking = "".join(c.delta_thinking for c in chunks)
+    assert thinking == "Let me think."
+    fragments = [d for c in chunks for d in c.delta_tool_calls]
+    assert fragments[0].id == "call_1" and fragments[0].name == "read"
+    assert fragments[1].arguments == '{"path": "x"}'
+    assert chunks[-1].finish_reason == "tool_calls"
+
+
+async def test_complete_extracts_thinking_from_message_extra() -> None:
+    response = {
+        "id": "c",
+        "object": "chat.completion",
+        "created": 1,
+        "model": "r-model",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "answer",
+                    "reasoning": "because",
+                },
+                "finish_reason": "stop",
+            }
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=response)
+
+    adapter = _adapter(_mock_client(handler))
+    result = await adapter.complete(
+        CompletionRequest(messages=[Message(role="user", content="why")])
+    )
+    assert result.thinking == "because"
+    assert result.text == "answer"

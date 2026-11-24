@@ -35,6 +35,7 @@ from octave.inference.types import (
     Message,
     ModelInfo,
     ToolCall,
+    ToolCallDelta,
     Usage,
 )
 
@@ -84,6 +85,20 @@ def _extract_context_window(model: object) -> int | None:
     return None
 
 
+_REASONING_KEYS = ("reasoning_content", "reasoning")
+"""Dialect spellings of chain-of-thought content (vLLM / DeepSeek / Qwen
+servers). Non-standard keys the SDK keeps in ``model_extra`` (issue #45)."""
+
+
+def _extract_reasoning(model: object) -> str:
+    extra: dict[str, object] = getattr(model, "model_extra", None) or {}
+    for key in _REASONING_KEYS:
+        value = extra.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
 @register("openai")
 class OpenAIAdapter(InferenceAdapter):
     """Adapter for OpenAI-dialect servers (Ollama, vLLM, llama.cpp, LM Studio).
@@ -125,6 +140,7 @@ class OpenAIAdapter(InferenceAdapter):
             finish_reason=choice.finish_reason,
             usage=_chat_usage(response.usage),
             tool_calls=tool_calls or None,
+            thinking=_extract_reasoning(choice.message) or None,
         )
 
     async def stream(
@@ -141,7 +157,22 @@ class OpenAIAdapter(InferenceAdapter):
                 choice = event.choices[0]
                 yield CompletionChunk(
                     delta_text=choice.delta.content or "",
+                    delta_thinking=_extract_reasoning(choice.delta),
+                    delta_tool_calls=[
+                        ToolCallDelta(
+                            index=call.index,
+                            id=call.id,
+                            name=call.function.name if call.function else None,
+                            arguments=(
+                                call.function.arguments
+                                if call.function and call.function.arguments
+                                else ""
+                            ),
+                        )
+                        for call in (choice.delta.tool_calls or [])
+                    ],
                     finish_reason=choice.finish_reason,
+                    model=event.model,
                 )
         except openai.APIError as exc:
             raise _translate(exc) from exc

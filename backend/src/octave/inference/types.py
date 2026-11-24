@@ -18,6 +18,7 @@ __all__ = [
     "Message",
     "ModelInfo",
     "ToolCall",
+    "ToolCallDelta",
     "ToolDefinition",
     "Usage",
 ]
@@ -35,6 +36,17 @@ class ToolCall(BaseModel):
     id: str
     name: str
     arguments: str
+
+
+class ToolCallDelta(BaseModel):
+    """One streamed tool-call fragment. OpenAI streams calls by ``index``:
+    the first fragment carries ``id``+``name``, later ones append
+    ``arguments``. Nothing is interpreted here — the loop assembles."""
+
+    index: int = 0
+    id: str | None = None
+    name: str | None = None
+    arguments: str = ""
 
 
 class Message(BaseModel):
@@ -95,13 +107,24 @@ class CompletionResult(BaseModel):
     finish_reason: str | None = None
     usage: Usage | None = None
     tool_calls: list[ToolCall] | None = None
+    thinking: str | None = None
+    """Dialect reasoning content (issue #45), None when the model doesn't emit it."""
 
 
 class CompletionChunk(BaseModel):
-    """One streamed delta; the final chunk carries ``finish_reason``."""
+    """One streamed delta; the final chunk carries ``finish_reason``.
+
+    ``delta_thinking`` carries dialect reasoning content (issue #45);
+    ``delta_tool_calls`` carries tool-call fragments by index. ``model``
+    is echoed per chunk by the OpenAI adapter so assembled results keep
+    the provider's model name.
+    """
 
     delta_text: str = ""
+    delta_thinking: str = ""
+    delta_tool_calls: list[ToolCallDelta] = Field(default_factory=list)
     finish_reason: str | None = None
+    model: str | None = None
 
 
 class EmbeddingRequest(BaseModel):

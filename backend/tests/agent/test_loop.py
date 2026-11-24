@@ -84,14 +84,14 @@ async def test_tools_sent_every_round() -> None:
         [tool_result(tool_call("c1", "mcp__fs__read")), final_result()]
     )
     await _loop(adapter, RecordingExecutor()).run(list(USER), populated)
-    assert [call.tools for call in adapter.complete_calls] == [populated.tools] * 2
+    assert [call.tools for call in adapter.requests] == [populated.tools] * 2
 
 
 async def test_empty_toolset_omits_tools() -> None:
     adapter = ScriptedAdapter([final_result()])
     await _loop(adapter, RecordingExecutor()).run(list(USER), TOOLSET)
     # empty toolset -> tools omitted (None), never an empty list
-    assert adapter.complete_calls[0].tools is None
+    assert adapter.requests[0].tools is None
 
 
 async def test_loop_limit_raises_with_partial_transcript() -> None:
@@ -99,7 +99,7 @@ async def test_loop_limit_raises_with_partial_transcript() -> None:
     loop = _loop(adapter, RecordingExecutor(), max_rounds=2)
     with pytest.raises(ToolLoopLimitError) as excinfo:
         await loop.run(list(USER), TOOLSET)
-    assert len(adapter.complete_calls) == 3
+    assert len(adapter.requests) == 3
     # user + (assistant+tool) x 2 executed rounds + unfulfilled assistant
     assert len(excinfo.value.messages) == 1 + 2 * 2 + 1
     assert excinfo.value.messages[-1].role == "assistant"

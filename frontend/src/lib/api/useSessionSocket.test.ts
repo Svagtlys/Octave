@@ -171,9 +171,7 @@ describe('useSessionSocket', () => {
     const { frames } = setup();
     const ws = FakeWebSocket.instances[0];
     act(() => ws.open());
-    act(() =>
-      ws.receive({ type: 'stream_thinking', session_id: 's_1', round: 0, delta: 'hmm' })
-    );
+    act(() => ws.receive({ type: 'stream_thinking', session_id: 's_1', round: 0, delta: 'hmm' }));
     act(() => ws.receive({ type: 'stream_text', session_id: 's_1', round: 0, delta: 'Hel' }));
     act(() =>
       ws.receive({

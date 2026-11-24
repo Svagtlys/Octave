@@ -38,6 +38,7 @@ __all__ = [
     "RouteOutcome",
     "StopReason",
     "TurnRecord",
+    "TurnReply",
     "TurnRunner",
 ]
 
@@ -73,15 +74,24 @@ class RouteOutcome:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class TurnReply:
+    """One runner turn's output: the reply text and the model's thinking
+    (dialect reasoning content, None when absent — issue #45)."""
+
+    text: str
+    thinking: str | None = None
+
+
 class TurnRunner(Protocol):
     """What happens inside a claimed turn. The real runner (context
     assembly + ToolLoop over the instance's model binding) is Integration
     #1's composition — mirrors the ToolExecutor/McpToolExecutor split.
-    Returns the final reply text."""
+    Returns the reply text and thinking."""
 
     async def run_turn(
         self, *, instance: RunningAgent, messages: list[Message]
-    ) -> str: ...
+    ) -> TurnReply: ...
 
 
 class MessageRouter:
@@ -168,7 +178,7 @@ class MessageRouter:
         await self._manager.begin_turn(candidate.instance_id)
         running = await self._registry.get_instance(candidate.instance_id)
         try:
-            reply_text = await self._turn_runner.run_turn(
+            reply = await self._turn_runner.run_turn(
                 instance=running, messages=messages
             )
         except Exception as exc:  # noqa: BLE001 — turn failures land idle
@@ -184,11 +194,11 @@ class MessageRouter:
             return RouteOutcome(
                 turns=turns, stop_reason=StopReason.ERROR, error=str(exc)
             )
-        reply = await self._events.append(
+        reply_event = await self._events.append(
             session_id,
             EventKind.ASSISTANT_MESSAGE,
             author_participant_id=candidate.participant_id,
-            payload={"content": reply_text},
+            payload={"content": reply.text, "thinking": reply.thinking},
         )
         await self._manager.end_turn(candidate.instance_id)
         turns.append(
@@ -197,7 +207,7 @@ class MessageRouter:
                 agent_id=running.agent_id,
                 instance_id=candidate.instance_id,
                 seq_start=bracket_start,
-                seq_end=reply.seq,
+                seq_end=reply_event.seq,
             )
         )
         return None

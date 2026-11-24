@@ -20,6 +20,7 @@ from octave.agent.instances import resolve_model
 from octave.agent.loop import ToolLoop
 from octave.agent.mcp_executor import McpToolExecutor
 from octave.agent.registry import RunningAgent
+from octave.agent.router import TurnReply
 from octave.context import ContextInjector
 from octave.db.event_store import EventStore
 from octave.db.models import Agent, Participant
@@ -61,7 +62,7 @@ class DefaultTurnRunner:
 
     async def run_turn(
         self, *, instance: RunningAgent, messages: list[Message]
-    ) -> str:
+    ) -> TurnReply:
         await ContextInjector(self._session).ensure_injected(
             session_id=instance.session_id, agent_id=instance.agent_id
         )
@@ -72,7 +73,7 @@ class DefaultTurnRunner:
         )
         turn = await loop.run(list(messages), toolset, model=model)
         await self._record_bracket(instance, turn.messages[len(messages) :])
-        return turn.result.text
+        return TurnReply(text=turn.result.text, thinking=turn.result.thinking)
 
     async def _resolve_model(self, agent_id: str) -> str:
         agent = await self._session.get(Agent, agent_id)

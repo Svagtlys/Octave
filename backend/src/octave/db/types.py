@@ -182,6 +182,8 @@ class AssistantMessagePayload(BaseModel):
 
     content: str
     model_name: str | None = None
+    thinking: str | None = None
+    """Dialect reasoning content (issue #45), collapsed in the UI."""
 
 
 SelectionReason = Literal["explicit", "global", "agent_tag"]

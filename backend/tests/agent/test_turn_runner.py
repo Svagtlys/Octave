@@ -68,11 +68,11 @@ async def _run(session_factory, adapter, registry, instance_id):
         runner = DefaultTurnRunner(
             session, adapter=adapter, registry=registry, adapter_name="fake"
         )
-        text = await runner.run_turn(
+        reply = await runner.run_turn(
             instance=running, messages=[Message(role="user", content="hi")]
         )
         await session.commit()
-        return text
+        return reply.text
 
 
 async def _kinds(session_factory) -> list[tuple[str, dict]]:

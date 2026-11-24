@@ -15,10 +15,20 @@ import {
 vi.mock('../../src/lib/api/sessions', () => ({
   fetchLatestMessages: vi.fn(),
   fetchOlderMessages: vi.fn(),
+  // The conversations panel (issue #46) mounts with the view; an empty list
+  // keeps it inert for these transcript-focused tests.
+  fetchSessions: vi.fn().mockResolvedValue({ items: [], total: 0, limit: 50, offset: 0 }),
+  createSession: vi.fn(),
+  deleteSession: vi.fn(),
 }));
 
 vi.mock('../../src/lib/api/useSessionSocket', () => ({
   useSessionSocket: vi.fn(),
+}));
+
+// The view navigates on panel interactions; no router is mounted here.
+vi.mock('@tanstack/react-router', () => ({
+  useNavigate: () => vi.fn(),
 }));
 
 const sendUserMessage = vi.fn();
@@ -82,7 +92,10 @@ describe('SessionChatView', () => {
   it('shows a loading state before the first page resolves', () => {
     vi.mocked(fetchLatestMessages).mockReturnValue(new Promise(() => {}));
     render(<SessionChatView sessionId="s_1" />);
-    expect(screen.getByRole('status').textContent).toContain('Loading transcript');
+    // The conversations panel contributes its own role="status"; find the
+    // transcript loader among them.
+    const statuses = screen.getAllByRole('status');
+    expect(statuses.some((el) => el.textContent?.includes('Loading transcript'))).toBe(true);
   });
 
   it('opens at the newest page', async () => {

@@ -58,6 +58,8 @@ class TranscriptMessageResponse(BaseModel):
     author: str | None
     content: str | None
     timestamp: datetime
+    thinking: str | None = None
+    """Dialect reasoning content on assistant rows (issue #45)."""
 
 
 class TranscriptListResponse(BaseModel):
@@ -202,4 +204,5 @@ def _to_message_response(row: TranscriptMessageRow) -> TranscriptMessageResponse
         author=row.author_label,
         content=row.content,
         timestamp=row.created_at,
+        thinking=row.thinking,
     )

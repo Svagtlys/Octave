@@ -25,7 +25,7 @@ async def test_fast_path_picks_sole_candidate_when_user_spoke_last() -> None:
     decider = LlmTurnDecider(adapter=adapter)
     state = _state(Message(role="user", content="Hello"))
     assert await decider.decide(state) == "p_ai1"
-    assert adapter.complete_calls == []
+    assert adapter.requests == []
 
 
 async def test_fast_path_awaits_user_when_agent_spoke_last() -> None:
@@ -36,7 +36,7 @@ async def test_fast_path_awaits_user_when_agent_spoke_last() -> None:
         Message(role="assistant", content="Hi"),
     )
     assert await decider.decide(state) == Decision.AWAIT_USER
-    assert adapter.complete_calls == []
+    assert adapter.requests == []
 
 
 async def test_fast_path_empty_transcript_picks_candidate() -> None:
@@ -51,7 +51,7 @@ async def test_multi_agent_valid_choice() -> None:
     decider = LlmTurnDecider(adapter=adapter)
     state = _state(Message(role="user", content="Hello"), roster=roster)
     assert await decider.decide(state) == "p_ai2"
-    assert len(adapter.complete_calls) == 1
+    assert len(adapter.requests) == 1
 
 
 async def test_multi_agent_await_user_choice() -> None:

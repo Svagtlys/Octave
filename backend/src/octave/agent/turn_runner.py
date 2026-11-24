@@ -20,6 +20,8 @@ from octave.agent.instances import resolve_model
 from octave.agent.loop import ToolLoop
 from octave.agent.mcp_executor import McpToolExecutor
 from octave.agent.registry import RunningAgent
+from octave.agent.router import TurnReply
+from octave.agent.streaming import StreamSink
 from octave.context import ContextInjector
 from octave.db.event_store import EventStore
 from octave.db.models import Agent, Participant
@@ -51,28 +53,32 @@ class DefaultTurnRunner:
         registry: ToolRegistry,
         adapter_name: str | None = None,
         tag_lookup: Callable[[str], str | None] | None = None,
+        stream_sink: StreamSink | None = None,
     ) -> None:
         self._session = session
         self._adapter = adapter
         self._registry = registry
         self._adapter_name = adapter_name
         self._tag_lookup = tag_lookup
+        self._stream_sink = stream_sink
         self._events = EventStore(session)
 
     async def run_turn(
         self, *, instance: RunningAgent, messages: list[Message]
-    ) -> str:
+    ) -> TurnReply:
         await ContextInjector(self._session).ensure_injected(
             session_id=instance.session_id, agent_id=instance.agent_id
         )
         model = await self._resolve_model(instance.agent_id)
         toolset = translate_tools(await self._registry.inventory())
         loop = ToolLoop(
-            adapter=self._adapter, executor=McpToolExecutor(self._registry)
+            adapter=self._adapter,
+            executor=McpToolExecutor(self._registry),
+            stream_sink=self._stream_sink,
         )
         turn = await loop.run(list(messages), toolset, model=model)
         await self._record_bracket(instance, turn.messages[len(messages) :])
-        return turn.result.text
+        return TurnReply(text=turn.result.text, thinking=turn.result.thinking)
 
     async def _resolve_model(self, agent_id: str) -> str:
         agent = await self._session.get(Agent, agent_id)

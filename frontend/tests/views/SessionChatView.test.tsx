@@ -281,4 +281,88 @@ describe('SessionChatView composer', () => {
     view.rerender(<SessionChatView sessionId="s_1" />);
     await waitFor(() => expect(fetchLatestMessages).toHaveBeenCalledTimes(2));
   });
+
+  it('streams thinking and text into a provisional bubble', async () => {
+    vi.mocked(fetchLatestMessages).mockResolvedValue(latestPage);
+    render(<SessionChatView sessionId="s_1" />);
+    await screen.findByText('Hello there');
+
+    await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'go');
+    await userEvent.click(screen.getByRole('button', { name: /^send$/i }));
+    expect(screen.getByText(/Agent is thinking/)).toBeDefined();
+
+    pushFrame({ type: 'stream_thinking', session_id: 's_1', round: 0, delta: 'hmm ' });
+    pushFrame({ type: 'stream_text', session_id: 's_1', round: 0, delta: 'Hel' });
+    pushFrame({ type: 'stream_text', session_id: 's_1', round: 0, delta: 'lo' });
+
+    expect(screen.queryByText(/Agent is thinking/)).toBeNull();
+    expect(screen.getByText('Hello')).toBeDefined();
+    expect(screen.getByText('hmm')).toBeDefined();
+  });
+
+  it('committed assistant_message replaces the provisional bubble', async () => {
+    vi.mocked(fetchLatestMessages).mockResolvedValue(latestPage);
+    render(<SessionChatView sessionId="s_1" />);
+    await screen.findByText('Hello there');
+
+    pushFrame({ type: 'stream_text', session_id: 's_1', round: 0, delta: 'partial' });
+    pushFrame(
+      eventFrame({ kind: 'assistant_message', seq: 9, content: 'Final answer' })
+    );
+
+    expect(screen.getByText('Final answer')).toBeDefined();
+    expect(screen.queryByText('partial')).toBeNull();
+  });
+
+  it('renders tool cards from stream frames and keeps them after commit', async () => {
+    vi.mocked(fetchLatestMessages).mockResolvedValue(latestPage);
+    render(<SessionChatView sessionId="s_1" />);
+    await screen.findByText('Hello there');
+
+    pushFrame({
+      type: 'stream_tool_start',
+      session_id: 's_1',
+      round: 0,
+      index: 0,
+      call_id: 'c1',
+      name: 'mcp__fs__write',
+    });
+    pushFrame({
+      type: 'stream_tool_args',
+      session_id: 's_1',
+      round: 0,
+      index: 0,
+      arguments: '{"a": 1}',
+    });
+    expect(screen.getByText('mcp__fs__write')).toBeDefined();
+    expect(screen.getByText('calling tool')).toBeDefined();
+
+    pushFrame({
+      type: 'stream_tool_result',
+      session_id: 's_1',
+      round: 0,
+      call_id: 'c1',
+      name: 'mcp__fs__write',
+      content: 'ok',
+      is_error: false,
+    });
+    expect(screen.getByText('done')).toBeDefined();
+    expect(screen.getByText('ok')).toBeDefined();
+
+    pushFrame(
+      eventFrame({ kind: 'assistant_message', seq: 9, content: 'File written.' })
+    );
+    // Cards survive the commit (spec Decision 5); the provisional text is gone.
+    expect(screen.getByText('mcp__fs__write')).toBeDefined();
+  });
+
+  it('error frames clear provisional state', async () => {
+    vi.mocked(fetchLatestMessages).mockResolvedValue(latestPage);
+    render(<SessionChatView sessionId="s_1" />);
+    await screen.findByText('Hello there');
+
+    pushFrame({ type: 'stream_text', session_id: 's_1', round: 0, delta: 'partial' });
+    pushFrame({ type: 'error', error: 'boom' });
+    expect(screen.queryByText('partial')).toBeNull();
+  });
 });

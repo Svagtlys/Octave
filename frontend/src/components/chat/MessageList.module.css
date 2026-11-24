@@ -87,3 +87,16 @@
   text-align: center;
   padding: var(--space-6) 0;
 }
+.thinkingBlock {
+  margin-bottom: 0.4rem;
+  font-size: 0.85rem;
+}
+.thinkingBlock summary {
+  cursor: pointer;
+  color: var(--color-text-muted, #999);
+}
+.thinkingContent {
+  white-space: pre-wrap;
+  margin-top: 0.3rem;
+  color: var(--color-text-muted, #999);
+}

@@ -751,3 +751,54 @@ async def test_message_page_before_walk_terminates(
             "s_1", before_seq=page3[-1].seq, limit=2
         )
         assert page4 == []
+
+
+# -- thinking on transcript rows (issue #45) ------------------------------------
+
+
+async def test_transcript_row_carries_thinking(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        await EventStore(session).append(
+            "s_1",
+            EventKind.ASSISTANT_MESSAGE,
+            author_participant_id="p_1",
+            payload={"content": "answer", "thinking": "because"},
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        rows = await SessionStore(session).list_message_page(
+            "s_1", after_seq=0, limit=10
+        )
+        assert rows[0].content == "answer"
+        assert rows[0].thinking == "because"
+
+
+async def test_transcript_row_thinking_null_for_user_message(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        await _append(
+            session, "s_1", EventKind.USER_MESSAGE, "hi", author="p_1"
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        rows = await SessionStore(session).list_message_page(
+            "s_1", after_seq=0, limit=10
+        )
+        assert rows[0].thinking is None

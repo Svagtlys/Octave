@@ -85,4 +85,28 @@ describe('MessageList', () => {
     expect(screen.getByText('You')).toBeDefined();
     expect(screen.queryByText('Agent')).toBeNull();
   });
+
+  it('renders committed thinking as a collapsed details block', () => {
+    render(
+      <MessageList
+        messages={[
+          msg({
+            kind: 'assistant_message',
+            author: 'Octave',
+            content: 'answer',
+            thinking: 'because reasons',
+          }),
+        ]}
+      />
+    );
+    const details = screen.getByText('Thinking').closest('details');
+    expect(details).toBeDefined();
+    expect(details?.textContent).toContain('because reasons');
+    expect(screen.getByText('answer')).toBeDefined();
+  });
+
+  it('omits the thinking block when thinking is absent', () => {
+    render(<MessageList messages={[msg({ kind: 'assistant_message', content: 'plain' })]} />);
+    expect(screen.queryByText('Thinking')).toBeNull();
+  });
 });

@@ -35,7 +35,7 @@ from octave.auth.store import AuthStore
 from octave.db.event_store import EventStore
 from octave.db.models import Event, Participant, Session, SessionParticipant
 from octave.db.session_store import SessionStore
-from octave.websocket.hub import get_hub
+from octave.websocket.hub import SessionHub, get_hub
 
 router = APIRouter()
 
@@ -112,6 +112,87 @@ async def _labels(db: AsyncSession) -> dict[str, str]:
     return {pid: label for pid, label in rows.all()}
 
 
+class _HubStreamSink:
+    """Per-frame ephemeral fan-out (issue #45): every delta broadcasts a
+    stream_* frame to the session's joined sockets. Best-effort parity —
+    SessionHub.broadcast evicts dead sockets itself, never fails the turn."""
+
+    def __init__(self, hub: SessionHub, session_id: str) -> None:
+        self._hub = hub
+        self._session_id = session_id
+
+    async def _send(self, payload: dict[str, object]) -> None:
+        await self._hub.broadcast(self._session_id, payload)
+
+    async def on_thinking_delta(self, *, round_index: int, text: str) -> None:
+        await self._send(
+            {
+                "type": "stream_thinking",
+                "session_id": self._session_id,
+                "round": round_index,
+                "delta": text,
+            }
+        )
+
+    async def on_text_delta(self, *, round_index: int, text: str) -> None:
+        await self._send(
+            {
+                "type": "stream_text",
+                "session_id": self._session_id,
+                "round": round_index,
+                "delta": text,
+            }
+        )
+
+    async def on_tool_call_start(
+        self, *, round_index: int, index: int, call_id: str, name: str
+    ) -> None:
+        await self._send(
+            {
+                "type": "stream_tool_start",
+                "session_id": self._session_id,
+                "round": round_index,
+                "index": index,
+                "call_id": call_id,
+                "name": name,
+            }
+        )
+
+    async def on_tool_args_delta(
+        self, *, round_index: int, index: int, arguments: str
+    ) -> None:
+        await self._send(
+            {
+                "type": "stream_tool_args",
+                "session_id": self._session_id,
+                "round": round_index,
+                "index": index,
+                "arguments": arguments,
+            }
+        )
+
+    async def on_tool_result(
+        self,
+        *,
+        round_index: int,
+        call_id: str,
+        name: str,
+        content: str,
+        is_error: bool,
+    ) -> None:
+        await self._send(
+            {
+                "type": "stream_tool_result",
+                "session_id": self._session_id,
+                "round": round_index,
+                "call_id": call_id,
+                "name": name,
+                "content": content,
+                "is_error": is_error,
+            }
+        )
+
+
 async def _handle_user_message(
     websocket: WebSocket, user_id: str, session_id: str, content: str
 ) -> None:
@@ -137,11 +218,13 @@ async def _handle_user_message(
             )
             return
         pre_max = await _max_seq(db, session_id)
+        sink = _HubStreamSink(hub, session_id)
         router = build_message_router(
             db,
             adapter=adapter,
             tool_registry=registry,
             adapter_name=getattr(app.state, "inference_adapter_name", None),
+            stream_sink=sink,
         )
         try:
             outcome = await router.deliver(

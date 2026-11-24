@@ -163,8 +163,10 @@ async def test_matches_router_turn_records(session_factory) -> None:
         def __init__(self, replies: list[str]) -> None:
             self._replies = list(replies)
 
-        async def run_turn(self, *, instance, messages) -> str:  # type: ignore[no-untyped-def]
-            return self._replies.pop(0)
+        async def run_turn(self, *, instance, messages):  # type: ignore[no-untyped-def]  # noqa: ANN001
+            from octave.agent.router import TurnReply
+
+            return TurnReply(text=self._replies.pop(0))
 
     async with session_factory() as session:
         router = MessageRouter(

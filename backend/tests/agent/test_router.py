@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from octave.agent import AgentInstanceManager, AgentRegistry
 from octave.agent.decider import Decision, DecisionState
 from octave.agent.errors import DeciderChoiceError, NotAMemberError
-from octave.agent.router import MessageRouter, StopReason
+from octave.agent.router import MessageRouter, StopReason, TurnReply
 from octave.db.event_store import EventStore
 from octave.db.models import Agent, Participant, Session, SessionParticipant, User
 from octave.db.types import EventKind, InstanceStatus
@@ -81,18 +81,23 @@ class ScriptedDecider:
 
 
 class RecordingRunner:
-    """Returns queued replies (Exception items raise); records inputs."""
+    """Returns queued replies (Exception items raise); records inputs. Queued
+    strings wrap into TurnReply; TurnReply items pass through (#45)."""
 
-    def __init__(self, replies: list[str]) -> None:
+    def __init__(self, replies: list[str | TurnReply | Exception]) -> None:
         self._replies = list(replies)
         self.calls: list[tuple[str, list[Message]]] = []
 
-    async def run_turn(self, *, instance, messages: list[Message]) -> str:  # type: ignore[no-untyped-def]
+    async def run_turn(
+        self, *, instance, messages: list[Message]  # type: ignore[no-untyped-def]
+    ) -> TurnReply:
         self.calls.append((instance.instance_id, list(messages)))
         item = self._replies.pop(0)
         if isinstance(item, Exception):
             raise item
-        return item
+        if isinstance(item, TurnReply):
+            return item
+        return TurnReply(text=item)
 
 
 def _router(
@@ -289,7 +294,9 @@ class _ToolAppendingRunner(RecordingRunner):
         super().__init__(replies)
         self._events = EventStore(session)
 
-    async def run_turn(self, *, instance, messages: list[Message]) -> str:  # type: ignore[no-untyped-def]
+    async def run_turn(
+        self, *, instance, messages: list[Message]  # type: ignore[no-untyped-def]
+    ) -> TurnReply:
         await self._events.append(
             "s_1", EventKind.TOOL_CALL, payload={"tool": "search", "args": {}}
         )
@@ -376,3 +383,23 @@ async def test_registry_consistent_after_loop(
         counts = await AgentRegistry(session).count_by_status()
     assert counts[InstanceStatus.ACTIVE] == 0
     assert counts[InstanceStatus.IDLE] == 2
+
+
+async def test_reply_event_payload_carries_thinking(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """The assistant_message payload records thinking when the runner
+    returns it (issue #45)."""
+    await _seed(session_factory)
+    await _spawn(session_factory, "a_1")
+    p_ai1 = await _participant_of(session_factory, "a_1")
+    await _invite_user(session_factory)
+    decider = ScriptedDecider([p_ai1, Decision.AWAIT_USER])
+    runner = RecordingRunner([TurnReply(text="answer", thinking="because")])
+    outcome = await _deliver(session_factory, decider=decider, runner=runner)
+    assert outcome.stop_reason == StopReason.AWAIT_USER
+    async with session_factory() as session:
+        events = await EventStore(session).read("s_1")
+    reply = [e for e in events if e.kind == "assistant_message"][-1]
+    assert reply.payload["content"] == "answer"
+    assert reply.payload["thinking"] == "because"

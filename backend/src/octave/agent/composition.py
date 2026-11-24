@@ -13,6 +13,7 @@ from octave.agent.decider import LlmTurnDecider
 from octave.agent.instances import AgentInstanceManager
 from octave.agent.registry import AgentRegistry
 from octave.agent.router import MessageRouter
+from octave.agent.streaming import StreamSink
 from octave.agent.turn_runner import DefaultTurnRunner
 from octave.inference.adapter import InferenceAdapter
 from octave.mcp import ToolRegistry
@@ -28,8 +29,10 @@ def build_message_router(
     adapter_name: str | None = None,
     tag_lookup: Callable[[str], str | None] | None = None,
     max_agent_turns: int = 4,
+    stream_sink: StreamSink | None = None,
 ) -> MessageRouter:
-    """Assemble decider + manager + registry + runner into the driver."""
+    """Assemble decider + manager + registry + runner into the driver.
+    The sink reaches the runner only — decider tokens never stream (#45)."""
     return MessageRouter(
         session=session,
         manager=AgentInstanceManager(session),
@@ -41,6 +44,7 @@ def build_message_router(
             registry=tool_registry,
             adapter_name=adapter_name,
             tag_lookup=tag_lookup,
+            stream_sink=stream_sink,
         ),
         max_agent_turns=max_agent_turns,
     )

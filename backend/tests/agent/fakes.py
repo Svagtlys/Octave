@@ -13,19 +13,21 @@ from octave.inference.types import (
     EmbeddingResult,
     ModelInfo,
     ToolCall,
+    ToolCallDelta,
 )
 
 
 class ScriptedAdapter(InferenceAdapter):
-    """Serves queued results (Exception items raise); records every request."""
+    """Serves queued results as streamed chunks (Exception items raise);
+    records every request. ToolLoop streams (issue #45); complete() stays
+    implemented for the ABC contract and pops the same queue."""
 
     def __init__(self, results: list[CompletionResult | Exception]) -> None:
         super().__init__(AdapterConfig(adapter="fake", base_url="http://fake.test/v1"))
         self._results = list(results)
-        self.complete_calls: list[CompletionRequest] = []
+        self.requests: list[CompletionRequest] = []
 
-    async def complete(self, request: CompletionRequest) -> CompletionResult:
-        self.complete_calls.append(request)
+    def _pop(self) -> CompletionResult:
         if not self._results:
             raise AssertionError("ScriptedAdapter queue exhausted")
         item = self._results.pop(0)
@@ -33,11 +35,36 @@ class ScriptedAdapter(InferenceAdapter):
             raise item
         return item
 
+    async def complete(self, request: CompletionRequest) -> CompletionResult:
+        self.requests.append(request)
+        return self._pop()
+
     async def stream(
         self, request: CompletionRequest
     ) -> AsyncIterator[CompletionChunk]:
-        raise NotImplementedError
-        yield CompletionChunk()  # satisfy async-generator typing
+        self.requests.append(request)
+        result = self._pop()
+        if result.thinking:
+            yield CompletionChunk(delta_thinking=result.thinking, model=result.model)
+        if result.text:
+            yield CompletionChunk(delta_text=result.text, model=result.model)
+        for index, call in enumerate(result.tool_calls or []):
+            yield CompletionChunk(
+                delta_tool_calls=[
+                    ToolCallDelta(
+                        index=index,
+                        id=call.id,
+                        name=call.name,
+                        arguments=call.arguments,
+                    )
+                ],
+                model=result.model,
+            )
+        yield CompletionChunk(
+            delta_text="",
+            finish_reason=result.finish_reason or "stop",
+            model=result.model,
+        )
 
     async def embed(self, request: EmbeddingRequest) -> EmbeddingResult:
         raise NotImplementedError

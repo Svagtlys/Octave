@@ -11,6 +11,7 @@ from octave.inference.types import (
     Message,
     ModelInfo,
     ToolCall,
+    ToolCallDelta,
     ToolDefinition,
 )
 
@@ -108,3 +109,29 @@ def test_tool_definition_defaults() -> None:
     assert tool.description is None
     assert tool.parameters == {}
     assert ToolDefinition(name="y").parameters is not tool.parameters
+
+
+def test_completion_chunk_stream_fields_round_trip() -> None:
+    chunk = CompletionChunk(
+        delta_text="hi",
+        delta_thinking="hmm",
+        delta_tool_calls=[
+            ToolCallDelta(index=1, id="c1", name="read", arguments='{"a"')
+        ],
+        model="m",
+        finish_reason="tool_calls",
+    )
+    assert chunk.model_dump()["delta_tool_calls"][0]["name"] == "read"
+
+
+def test_completion_chunk_stream_fields_default_empty() -> None:
+    chunk = CompletionChunk()
+    assert chunk.delta_thinking == ""
+    assert chunk.delta_tool_calls == []
+    assert chunk.model is None
+
+
+def test_completion_result_thinking_optional() -> None:
+    result = CompletionResult(text="t", model="m")
+    assert result.thinking is None
+    assert CompletionResult(text="t", model="m", thinking="w").thinking == "w"

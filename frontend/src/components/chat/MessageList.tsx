@@ -92,6 +92,12 @@ export function MessageList({ messages }: MessageListProps) {
                 )}
               </div>
               <div className={styles.content}>
+                {message.thinking && (
+                  <details className={styles.thinkingBlock}>
+                    <summary>Thinking</summary>
+                    <div className={styles.thinkingContent}>{message.thinking}</div>
+                  </details>
+                )}
                 {message.content ?? (
                   <span className={styles.corrupt}>[unavailable message content]</span>
                 )}

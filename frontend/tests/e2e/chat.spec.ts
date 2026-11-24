@@ -109,4 +109,45 @@ test.describe('chat transcript view (real backend)', () => {
     // Still inside the shell.
     await expect(page.getByRole('link', { name: /sessions/i })).toBeVisible();
   });
+
+  test('sending a message echoes it into the transcript over the websocket', async ({
+    page,
+  }) => {
+    // Sign in with the owner bootstrapped by test 1 (same idiom as the
+    // not-found test). The user_message echo is broadcast even when the
+    // inference engine is down — the router commits the user_message before
+    // the turn runs (#60 error contract), so this leg needs no live Ollama.
+    await page.goto('/');
+    const signInButton = page.getByRole('button', { name: /^sign in$/i });
+    try {
+      await signInButton.waitFor({ state: 'visible', timeout: 10_000 });
+    } catch {
+      test.info().annotations.push({
+        type: 'note',
+        description: 'Sign-in form never appeared — test 1 did not bootstrap.',
+      });
+      test.skip();
+      return;
+    }
+    await page.getByLabel('Username').fill(owner.username);
+    await page.getByLabel('Password').fill(owner.password);
+    await signInButton.click();
+    await expect(page).toHaveURL(/\/sessions$/, { timeout: 10_000 });
+
+    const created = await page.request.post('/api/sessions', { data: {} });
+    expect(created.ok()).toBeTruthy();
+    const sessionId = (await created.json()).id as string;
+
+    await page.goto(`/sessions/${sessionId}`);
+    await expect(page.getByText(/No messages yet/)).toBeVisible();
+
+    const unique = `e2e echo ${Date.now()}`;
+    await page.getByLabel('Message input').fill(unique);
+    await page.getByRole('button', { name: /^send$/i }).click();
+
+    // The composer clears immediately; the message reappears as a transcript
+    // row when the hub echo lands.
+    await expect(page.getByText(unique)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByLabel('Message input')).toHaveValue('');
+  });
 });

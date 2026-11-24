@@ -1,13 +1,47 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { act } from 'react';
+import type { MutableRefObject } from 'react';
 import SessionChatView from '../../src/views/SessionChatView';
 import { fetchLatestMessages, fetchOlderMessages } from '../../src/lib/api/sessions';
 import { ApiError } from '../../src/lib/api/client';
+import {
+  useSessionSocket,
+  type SocketFrame,
+  type SocketStatus,
+} from '../../src/lib/api/useSessionSocket';
 
 vi.mock('../../src/lib/api/sessions', () => ({
   fetchLatestMessages: vi.fn(),
   fetchOlderMessages: vi.fn(),
 }));
+
+vi.mock('../../src/lib/api/useSessionSocket', () => ({
+  useSessionSocket: vi.fn(),
+}));
+
+const sendUserMessage = vi.fn();
+let frameSink: ((frame: SocketFrame) => void) | null = null;
+let socketStatus: SocketStatus = 'open';
+
+function pushFrame(frame: SocketFrame) {
+  act(() => {
+    frameSink?.(frame);
+  });
+}
+
+function eventFrame(overrides: Partial<SocketFrame> = {}): SocketFrame {
+  return {
+    type: 'event',
+    session_id: 's_1',
+    seq: 4,
+    kind: 'user_message',
+    author: 'Alice',
+    content: 'Echoed message',
+    ...overrides,
+  } as SocketFrame;
+}
 
 const latestPage = {
   items: [
@@ -33,6 +67,15 @@ const latestPage = {
 beforeEach(() => {
   vi.mocked(fetchLatestMessages).mockReset();
   vi.mocked(fetchOlderMessages).mockReset();
+  frameSink = null;
+  socketStatus = 'open';
+  sendUserMessage.mockReset();
+  vi.mocked(useSessionSocket).mockImplementation(
+    (_sid, sinkRef: MutableRefObject<((frame: SocketFrame) => void) | null>) => {
+      frameSink = sinkRef.current;
+      return { status: socketStatus, sendUserMessage };
+    }
+  );
 });
 
 describe('SessionChatView', () => {
@@ -142,5 +185,100 @@ describe('SessionChatView', () => {
     expect(await screen.findByText('Different session')).toBeDefined();
     expect(screen.queryByText('Hello there')).toBeNull();
     expect(fetchLatestMessages).toHaveBeenLastCalledWith('s_2');
+  });
+});
+
+describe('SessionChatView composer', () => {
+  beforeEach(async () => {
+    vi.mocked(fetchLatestMessages).mockResolvedValue(latestPage);
+  });
+
+  it('renders the composer below the transcript', async () => {
+    render(<SessionChatView sessionId="s_1" />);
+    await screen.findByText('Hello there');
+    expect(screen.getByRole('textbox', { name: /message input/i })).toBeDefined();
+    expect(screen.getByRole('button', { name: /^send$/i })).toBeDefined();
+  });
+
+  it('Send calls sendUserMessage and shows the waiting status', async () => {
+    render(<SessionChatView sessionId="s_1" />);
+    await screen.findByText('Hello there');
+    await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'Hi agent!');
+    await userEvent.click(screen.getByRole('button', { name: /^send$/i }));
+    expect(sendUserMessage).toHaveBeenCalledWith('Hi agent!');
+    expect(screen.getByRole('status').textContent).toContain('thinking');
+  });
+
+  it('renders the sender echo when the user_message event frame arrives', async () => {
+    render(<SessionChatView sessionId="s_1" />);
+    await screen.findByText('Hello there');
+    pushFrame(eventFrame({ seq: 7, content: 'Echoed message' }));
+    expect(await screen.findByText('Echoed message')).toBeDefined();
+  });
+
+  it('assistant_message frame clears the waiting status', async () => {
+    render(<SessionChatView sessionId="s_1" />);
+    await screen.findByText('Hello there');
+    await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'Hi');
+    await userEvent.click(screen.getByRole('button', { name: /^send$/i }));
+    expect(screen.getByRole('status').textContent).toContain('thinking');
+    pushFrame(
+      eventFrame({ seq: 8, kind: 'assistant_message', author: 'Octave', content: 'Reply!' })
+    );
+    expect(await screen.findByText('Reply!')).toBeDefined();
+    expect(screen.queryByText(/thinking/)).toBeNull();
+  });
+
+  it('ignores non-chat event kinds', async () => {
+    render(<SessionChatView sessionId="s_1" />);
+    await screen.findByText('Hello there');
+    pushFrame(eventFrame({ seq: 8, kind: 'tool_call', content: 'filesystem:read' }));
+    pushFrame(eventFrame({ seq: 9, kind: 'system', content: 'internal note' }));
+    expect(screen.queryByText('filesystem:read')).toBeNull();
+    expect(screen.queryByText('internal note')).toBeNull();
+  });
+
+  it('dedupes by seq — a repeated frame renders one row', async () => {
+    render(<SessionChatView sessionId="s_1" />);
+    await screen.findByText('Hello there');
+    pushFrame(eventFrame({ seq: 7, content: 'Only once' }));
+    pushFrame(eventFrame({ seq: 7, content: 'Only once' }));
+    const rows = Array.from(screen.getAllByText('Only once'));
+    expect(rows).toHaveLength(1);
+  });
+
+  it('error frame shows an alert and clears the waiting status', async () => {
+    render(<SessionChatView sessionId="s_1" />);
+    await screen.findByText('Hello there');
+    await userEvent.type(screen.getByRole('textbox', { name: /message input/i }), 'Hi');
+    await userEvent.click(screen.getByRole('button', { name: /^send$/i }));
+    pushFrame({ type: 'error', error: 'request pipeline not configured' });
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('pipeline');
+    expect(screen.queryByText(/thinking/)).toBeNull();
+  });
+
+  it('composer is disabled when the socket is not open', async () => {
+    socketStatus = 'closed';
+    render(<SessionChatView sessionId="s_1" />);
+    await screen.findByText('Hello there');
+    expect(
+      (screen.getByRole('textbox', { name: /message input/i }) as HTMLTextAreaElement).disabled
+    ).toBe(true);
+    expect((screen.getByRole('button', { name: /^send$/i }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+    expect(screen.getByRole('status').textContent).toContain('Disconnected');
+  });
+
+  it('re-fetches the newest page when the socket reconnects', async () => {
+    const view = render(<SessionChatView sessionId="s_1" />);
+    await screen.findByText('Hello there');
+    expect(fetchLatestMessages).toHaveBeenCalledTimes(1);
+    socketStatus = 'closed';
+    view.rerender(<SessionChatView sessionId="s_1" />);
+    socketStatus = 'open';
+    view.rerender(<SessionChatView sessionId="s_1" />);
+    await waitFor(() => expect(fetchLatestMessages).toHaveBeenCalledTimes(2));
   });
 });

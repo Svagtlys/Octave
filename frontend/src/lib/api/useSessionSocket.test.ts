@@ -167,6 +167,57 @@ describe('useSessionSocket', () => {
     expect(frames).toHaveLength(1);
   });
 
+  it('surfaces stream_* frames to the sink', () => {
+    const { frames } = setup();
+    const ws = FakeWebSocket.instances[0];
+    act(() => ws.open());
+    act(() =>
+      ws.receive({ type: 'stream_thinking', session_id: 's_1', round: 0, delta: 'hmm' })
+    );
+    act(() => ws.receive({ type: 'stream_text', session_id: 's_1', round: 0, delta: 'Hel' }));
+    act(() =>
+      ws.receive({
+        type: 'stream_tool_start',
+        session_id: 's_1',
+        round: 0,
+        index: 0,
+        call_id: 'c1',
+        name: 'read',
+      })
+    );
+    act(() =>
+      ws.receive({
+        type: 'stream_tool_args',
+        session_id: 's_1',
+        round: 0,
+        index: 0,
+        arguments: '{"a"',
+      })
+    );
+    act(() =>
+      ws.receive({
+        type: 'stream_tool_result',
+        session_id: 's_1',
+        round: 0,
+        call_id: 'c1',
+        name: 'read',
+        content: 'ok',
+        is_error: false,
+      })
+    );
+    expect(frames).toHaveLength(5);
+    expect(frames[0]).toMatchObject({ type: 'stream_thinking', delta: 'hmm' });
+    expect(frames[4]).toMatchObject({ type: 'stream_tool_result', call_id: 'c1' });
+  });
+
+  it('drops stream frames for a different session', () => {
+    const { frames } = setup();
+    const ws = FakeWebSocket.instances[0];
+    act(() => ws.open());
+    act(() => ws.receive({ type: 'stream_text', session_id: 's_other', round: 0, delta: 'x' }));
+    expect(frames).toHaveLength(0);
+  });
+
   it('unmount closes the socket and cancels reconnects', () => {
     const { unmount } = renderHook(() => {
       const sinkRef = useRef<(frame: SocketFrame) => void>(() => {});

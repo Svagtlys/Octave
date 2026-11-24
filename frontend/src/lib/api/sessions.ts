@@ -12,6 +12,9 @@ export interface TranscriptMessage {
   content: string | null;
   /** ISO-8601 datetime (events.created_at serialized). */
   timestamp: string;
+  /** Dialect reasoning content (issue #45); present on agent rows when the
+   * model emitted thinking. Rendered collapsed. */
+  thinking?: string | null;
 }
 
 export interface TranscriptPage {

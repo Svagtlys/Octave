@@ -108,6 +108,7 @@ export default function SessionChatView({ sessionId }: SessionChatViewProps) {
         setAwaitingReply(false);
         return;
       }
+      if (frame.type !== 'event') return; // stream_* frames handled below in later work
       const isChat = frame.kind === 'user_message' || frame.kind === 'assistant_message';
       if (!isChat) return; // tool/system frames are not transcript rows.
       if (frame.kind === 'assistant_message') setAwaitingReply(false);

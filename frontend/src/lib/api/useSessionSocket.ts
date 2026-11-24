@@ -10,6 +10,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
  *   out: {type:'join', session_id} | {type:'user_message', session_id, content}
  *   in:  {type:'event', session_id, seq, kind, author, content}
  *        {type:'error', error}   (no session_id — always surfaced)
+ *        {type:'stream_thinking', session_id, round, delta}
+ *        {type:'stream_text', session_id, round, delta}
+ *        {type:'stream_tool_start', session_id, round, index, call_id, name}
+ *        {type:'stream_tool_args', session_id, round, index, arguments}
+ *        {type:'stream_tool_result', session_id, round, call_id, name, content, is_error}
  */
 
 export type SocketStatus = 'connecting' | 'open' | 'closed' | 'error';
@@ -28,7 +33,59 @@ export interface SocketError {
   error: string;
 }
 
-export type SocketFrame = SocketEvent | SocketError;
+export interface StreamThinkingFrame {
+  type: 'stream_thinking';
+  session_id: string;
+  round: number;
+  delta: string;
+}
+export interface StreamTextFrame {
+  type: 'stream_text';
+  session_id: string;
+  round: number;
+  delta: string;
+}
+export interface StreamToolStartFrame {
+  type: 'stream_tool_start';
+  session_id: string;
+  round: number;
+  index: number;
+  call_id: string;
+  name: string;
+}
+export interface StreamToolArgsFrame {
+  type: 'stream_tool_args';
+  session_id: string;
+  round: number;
+  index: number;
+  arguments: string;
+}
+export interface StreamToolResultFrame {
+  type: 'stream_tool_result';
+  session_id: string;
+  round: number;
+  call_id: string;
+  name: string;
+  content: string;
+  is_error: boolean;
+}
+
+export type SocketFrame =
+  | SocketEvent
+  | SocketError
+  | StreamThinkingFrame
+  | StreamTextFrame
+  | StreamToolStartFrame
+  | StreamToolArgsFrame
+  | StreamToolResultFrame;
+
+const STREAM_TYPES = new Set([
+  'stream_thinking',
+  'stream_text',
+  'stream_tool_start',
+  'stream_tool_args',
+  'stream_tool_result',
+]);
 
 /** Frame sink installed by the consumer; called for every matching frame. */
 export type FrameSink = (frame: SocketFrame) => void;
@@ -79,9 +136,13 @@ export function useSessionSocket(
           return; // Malformed frame at the transport edge — nothing to route.
         }
         const type = (frame as { type?: unknown }).type;
-        if (type !== 'event' && type !== 'error') return; // joined/pong/unknown
-        const candidate = frame as SocketEvent | (SocketError & { session_id?: string });
-        if (type === 'event' && (candidate as SocketEvent).session_id !== sessionId) {
+        const isStream = typeof type === 'string' && STREAM_TYPES.has(type);
+        if (type !== 'event' && type !== 'error' && !isStream) return; // joined/pong/unknown
+        const candidate = frame as
+          | SocketEvent
+          | (StreamThinkingFrame & { session_id: string })
+          | (SocketError & { session_id?: string });
+        if (type !== 'error' && (candidate as { session_id?: string }).session_id !== sessionId) {
           return; // Stale frame from a session we no longer view.
         }
         onFrameRef.current?.(candidate as SocketFrame);

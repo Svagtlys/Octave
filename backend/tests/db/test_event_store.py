@@ -97,7 +97,11 @@ async def test_assistant_payload_defaults_model_name_null(
             author_participant_id=author,
             payload={"content": "hi"},
         )
-        assert event.payload == {"content": "hi", "model_name": None}
+        assert event.payload == {
+            "content": "hi",
+            "model_name": None,
+            "thinking": None,
+        }
 
 
 async def test_tool_and_system_kinds_pass_through(

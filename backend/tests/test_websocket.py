@@ -192,19 +192,59 @@ def test_user_message_drives_full_flow_and_broadcasts(
                 {"type": "user_message", "session_id": "s_alice", "content": "hi"}
             )
         )
-        frames = [json.loads(ws.receive_text()) for _ in range(5)]
-    assert [f["kind"] for f in frames] == [
+        frames: list[dict] = []
+        while len([f for f in frames if f["type"] == "event"]) < 5:
+            frames.append(json.loads(ws.receive_text()))
+    events = [f for f in frames if f["type"] == "event"]
+    assert [f["kind"] for f in events] == [
         "user_message",
         "context_injection",
         "tool_call",
         "tool_result",
         "assistant_message",
     ]
-    assert [f["seq"] for f in frames] == [1, 2, 3, 4, 5]
-    assert frames[0]["content"] == "hi"
-    assert frames[0]["author"] == "Alice"
-    assert frames[4]["content"] == "File written."
-    assert frames[4]["author"] == "Octave"
+    assert [f["seq"] for f in events] == [1, 2, 3, 4, 5]
+    assert events[0]["content"] == "hi"
+    assert events[0]["author"] == "Alice"
+    assert events[4]["content"] == "File written."
+    assert events[4]["author"] == "Octave"
+
+
+def test_user_message_streams_before_committed_events(
+    pipeline_client: TestClient,
+) -> None:
+    """stream_* frames arrive while the turn runs, before the post-commit
+    event broadcast (issue #45)."""
+    token = pipeline_client.app.state.tokens["alice"]
+    with pipeline_client.websocket_connect("/ws", headers=_cookie(token)) as ws:
+        ws.send_text(json.dumps({"type": "join", "session_id": "s_alice"}))
+        assert json.loads(ws.receive_text())["type"] == "joined"
+        ws.send_text(
+            json.dumps(
+                {"type": "user_message", "session_id": "s_alice", "content": "hi"}
+            )
+        )
+        frames: list[dict] = []
+        while not any(
+            f["type"] == "event" and f.get("kind") == "assistant_message"
+            for f in frames
+        ):
+            frames.append(json.loads(ws.receive_text()))
+    stream_types = [f["type"] for f in frames if f["type"].startswith("stream_")]
+    assert stream_types == [
+        "stream_tool_start",
+        "stream_tool_args",
+        "stream_tool_result",
+        "stream_text",
+    ]
+    start = frames[0]
+    assert start["session_id"] == "s_alice"
+    assert start["round"] == 0 and start["index"] == 0
+    assert start["call_id"] == "c1" and start["name"] == "mcp__fs__write"
+    assert frames[2]["is_error"] is False
+    assert frames[3]["delta"] == "File written."
+    # Stream frames all precede the committed event frames.
+    assert next(i for i, f in enumerate(frames) if f["type"] == "event") == 4
 
 
 def test_user_message_without_adapter_sends_error_frame(

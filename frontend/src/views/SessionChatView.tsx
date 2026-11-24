@@ -5,10 +5,30 @@ import type { TranscriptMessage } from '../lib/api/sessions';
 import { useSessionSocket, type FrameSink, type SocketFrame } from '../lib/api/useSessionSocket';
 import { MessageList } from '../components/chat/MessageList';
 import { ChatInput } from '../components/chat/ChatInput';
+import { ToolCallCard } from '../components/chat/ToolCallCard';
 import { Button } from '../components/ui';
 import styles from './SessionChatView.module.css';
 
 type LoadState = 'loading' | 'ready' | 'error';
+
+interface ToolCardState {
+  callId: string;
+  name: string;
+  round: number;
+  index: number;
+  arguments: string;
+  content: string | null;
+  is_error: boolean;
+  done: boolean;
+}
+
+interface ProvisionalState {
+  thinking: string;
+  text: string;
+  cards: ToolCardState[];
+}
+
+const EMPTY_PROVISIONAL: ProvisionalState = { thinking: '', text: '', cards: [] };
 
 function describeError(error: unknown): string {
   if (error instanceof ApiError) {
@@ -36,6 +56,7 @@ export default function SessionChatView({ sessionId }: SessionChatViewProps) {
   const [prevCursor, setPrevCursor] = useState<number | null>(null);
   const [prepending, setPrepending] = useState(false);
   const [awaitingReply, setAwaitingReply] = useState(false);
+  const [provisional, setProvisional] = useState<ProvisionalState>(EMPTY_PROVISIONAL);
   // Guards against out-of-order responses and setState-after-unmount when
   // the sessionId changes mid-flight.
   const requestRef = useRef(0);
@@ -75,6 +96,7 @@ export default function SessionChatView({ sessionId }: SessionChatViewProps) {
     setMessages([]);
     setPrevCursor(null);
     setAwaitingReply(false);
+    setProvisional(EMPTY_PROVISIONAL);
     hasOpenedRef.current = false;
     loadLatest();
   }, [loadLatest]);
@@ -106,12 +128,65 @@ export default function SessionChatView({ sessionId }: SessionChatViewProps) {
       if (frame.type === 'error') {
         setError(frame.error || 'The agent run failed.');
         setAwaitingReply(false);
+        setProvisional(EMPTY_PROVISIONAL);
         return;
       }
-      if (frame.type !== 'event') return; // stream_* frames handled below in later work
+      if (frame.type === 'stream_thinking') {
+        setProvisional((p) => ({ ...p, thinking: p.thinking + frame.delta }));
+        return;
+      }
+      if (frame.type === 'stream_text') {
+        setProvisional((p) => ({ ...p, text: p.text + frame.delta }));
+        return;
+      }
+      if (frame.type === 'stream_tool_start') {
+        setProvisional((p) => ({
+          ...p,
+          cards: [
+            ...p.cards,
+            {
+              callId: frame.call_id,
+              name: frame.name,
+              round: frame.round,
+              index: frame.index,
+              arguments: '',
+              content: null,
+              is_error: false,
+              done: false,
+            },
+          ],
+        }));
+        return;
+      }
+      if (frame.type === 'stream_tool_args') {
+        setProvisional((p) => ({
+          ...p,
+          cards: p.cards.map((card) =>
+            card.round === frame.round && card.index === frame.index
+              ? { ...card, arguments: card.arguments + frame.arguments }
+              : card
+          ),
+        }));
+        return;
+      }
+      if (frame.type === 'stream_tool_result') {
+        setProvisional((p) => ({
+          ...p,
+          cards: p.cards.map((card) =>
+            card.callId === frame.call_id
+              ? { ...card, content: frame.content, is_error: frame.is_error, done: true }
+              : card
+          ),
+        }));
+        return;
+      }
+      if (frame.type !== 'event') return;
       const isChat = frame.kind === 'user_message' || frame.kind === 'assistant_message';
       if (!isChat) return; // tool/system frames are not transcript rows.
-      if (frame.kind === 'assistant_message') setAwaitingReply(false);
+      if (frame.kind === 'assistant_message') {
+        setAwaitingReply(false);
+        setProvisional((p) => ({ ...p, thinking: '', text: '' })); // reconcile: committed row wins (Decision 5)
+      }
       if (messagesRef.current.some((m) => m.seq === frame.seq)) return; // dedupe
       applyMessages((prev) =>
         [
@@ -154,6 +229,7 @@ export default function SessionChatView({ sessionId }: SessionChatViewProps) {
     (text: string) => {
       setError(null);
       sendUserMessage(text);
+      setProvisional(EMPTY_PROVISIONAL);
       setAwaitingReply(true);
     },
     [sendUserMessage]
@@ -193,10 +269,34 @@ export default function SessionChatView({ sessionId }: SessionChatViewProps) {
         </p>
       )}
       <MessageList messages={messages} />
-      {awaitingReply && (
+      {awaitingReply && !provisional.thinking && !provisional.text && (
         <p className={styles.thinking} role="status">
           Agent is thinking…
         </p>
+      )}
+      {(provisional.thinking || provisional.text) && (
+        <div className={styles.streaming} role="status" aria-live="polite">
+          {provisional.thinking && (
+            <details className={styles.thinkingBlock} open={!provisional.text}>
+              <summary>Thinking…</summary>
+              <div className={styles.thinkingContent}>{provisional.thinking}</div>
+            </details>
+          )}
+          <div className={styles.streamingText}>{provisional.text}</div>
+        </div>
+      )}
+      {provisional.cards.length > 0 && (
+        <div className={styles.toolCards}>
+          {provisional.cards.map((card) => (
+            <ToolCallCard
+              key={card.callId}
+              name={card.name}
+              status={card.done ? (card.is_error ? 'error' : 'done') : 'calling'}
+              arguments={card.arguments}
+              output={card.content}
+            />
+          ))}
+        </div>
       )}
       <ChatInput onSend={handleSend} disabled={status !== 'open'} />
       {status !== 'open' && (

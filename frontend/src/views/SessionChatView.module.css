@@ -37,3 +37,27 @@
   color: var(--color-text-dim);
   padding: var(--space-3) 0;
 }
+.streaming {
+  padding: 0.4rem 0.6rem;
+  margin: 0.3rem 0;
+  border-left: 3px solid var(--color-accent, #66f);
+}
+.thinkingBlock {
+  font-size: 0.85rem;
+  margin-bottom: 0.3rem;
+}
+.thinkingBlock summary {
+  cursor: pointer;
+  color: var(--color-text-muted, #999);
+}
+.thinkingContent {
+  white-space: pre-wrap;
+  margin-top: 0.3rem;
+  color: var(--color-text-muted, #999);
+}
+.streamingText {
+  white-space: pre-wrap;
+}
+.toolCards {
+  margin: 0.3rem 0;
+}

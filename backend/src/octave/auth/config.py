@@ -30,3 +30,13 @@ class AuthSettings(BaseSettings):
     absolute_ttl_days: int = 90
     """Hard cap: sliding renewal never extends a session past
     ``created_at + absolute_ttl_days``."""
+
+    touch_grace_seconds: int = 60
+    """Throttle for the out-of-band session slide (issue #161): an authed
+    request only rewrites ``last_seen_at``/``expires_at`` when the stored
+    value is older than this. Expiry is advisory-precision by design."""
+
+    touch_timeout_seconds: float = 2.0
+    """Max time the request path waits for the out-of-band slide. Must stay
+    below the SQLite ``busy_timeout`` (5 s) so a held write lock cancels the
+    slide instead of delaying the response."""

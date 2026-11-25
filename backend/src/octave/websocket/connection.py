@@ -31,9 +31,11 @@ from octave.auth.config import AuthSettings
 from octave.auth.deps import SESSION_COOKIE
 from octave.auth.passwords import Argon2Hasher
 from octave.auth.service import AuthService
+from octave.auth.sliding import slide_session
 from octave.auth.store import AuthStore
 from octave.db.event_store import EventStore
 from octave.db.models import Event, Participant, Session, SessionParticipant
+from octave.db.models.base import utcnow
 from octave.db.session_store import SessionStore
 from octave.websocket.hub import SessionHub, get_hub
 
@@ -56,9 +58,13 @@ def _service_factory(
     return _build
 
 
+def _ws_settings(websocket: WebSocket) -> AuthSettings:
+    return getattr(websocket.app.state, "auth_settings", None) or AuthSettings()
+
+
 async def _resolve_identity(websocket: WebSocket) -> str | None:
-    """Cookie -> user id (or None). Commits the idle-expiry slide: the WS
-    scope owns its own transient session/transaction."""
+    """Cookie -> user id (or None). Pure read (issue #161); the idle-expiry
+    slide runs best-effort on its own transaction via ``slide_session``."""
     factory = getattr(websocket.app.state, "db_session_factory", None)
     if factory is None:
         return None
@@ -68,10 +74,10 @@ async def _resolve_identity(websocket: WebSocket) -> str | None:
     async with factory() as session:
         service = await _service_factory(websocket)(session)
         resolved = await service.resolve_session(token)
-        if resolved is None:
-            return None
-        await session.commit()
-        return resolved[0].id
+    if resolved is None:
+        return None
+    await slide_session(factory, token, settings=_ws_settings(websocket), now=utcnow())
+    return resolved[0].id
 
 
 async def _may_join(user_id: str, session_id: str, websocket: WebSocket) -> bool:

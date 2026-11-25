@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import case, delete, func, select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -149,35 +149,52 @@ class AuthStore:
     async def get_by_token_hash(
         self, token_hash: str, now: datetime
     ) -> AuthSession | None:
-        """Valid rows only: an expired row is deleted on read (lazy sweep)
-        and reported as absent. The delete only persists if the caller's
-        route commits — read-only routes leave the row for login's
-        ``purge_expired``; harmless either way."""
+        """Valid rows only: an expired row is reported as absent but NOT
+        deleted — the read transaction stays write-free (issue #161: a
+        delete here upgrades the deferred BEGIN and deadlocks in WAL).
+        Expired rows die in login's ``purge_expired``."""
         row = await self._session.get(AuthSession, token_hash)
-        if row is None:
-            return None
-        if row.expires_at <= now:
-            await self._session.delete(row)
-            await self._session.flush()
+        if row is None or row.expires_at <= now:
             return None
         return row
 
-    async def touch_session(
+    async def touch_session_by_hash(
         self,
-        row: AuthSession,
+        token_hash: str,
         *,
         now: datetime,
         idle_ttl_days: int = 14,
         absolute_ttl_days: int = 90,
-    ) -> None:
-        """Slide idle expiry forward, never past the absolute cap
-        (``created_at + absolute_ttl_days``)."""
-        row.last_seen_at = now
-        row.expires_at = min(
-            now + timedelta(days=idle_ttl_days),
-            row.created_at + timedelta(days=absolute_ttl_days),
+        grace_seconds: int = 60,
+    ) -> int:
+        """Slide idle expiry, never past ``created_at + absolute_ttl_days``.
+
+        One statement, no preceding read: a SELECT-then-UPDATE here would
+        reintroduce the WAL write-upgrade deadlock (issue #161) inside the
+        slide transaction itself. The grace clause throttles: rows touched
+        within ``grace_seconds`` are skipped (rowcount 0, no write lock).
+        ``strftime('%...:%f000')`` preserves the 6-fraction-digit shape the
+        DATETIME result processor expects. Never commits — callers own the
+        transaction.
+        """
+        idle_expiry = now + timedelta(days=idle_ttl_days)
+        abs_cap = func.strftime(
+            "%Y-%m-%d %H:%M:%f000",
+            AuthSession.created_at,
+            f"+{absolute_ttl_days} days",
         )
-        await self._session.flush()
+        result = await self._session.execute(
+            update(AuthSession)
+            .where(
+                AuthSession.id == token_hash,
+                AuthSession.last_seen_at < now - timedelta(seconds=grace_seconds),
+            )
+            .values(
+                last_seen_at=now,
+                expires_at=case((abs_cap < idle_expiry, abs_cap), else_=idle_expiry),
+            )
+        )
+        return int(_rowcount(result))
 
     async def delete_sessions_for_user(self, user_id: str) -> int:
         """Deactivation revocation: instant logout everywhere. Returns the

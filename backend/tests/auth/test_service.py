@@ -1,9 +1,10 @@
 """AuthService: bootstrap/login/deactivate/resolve — dummy hasher, real DB."""
 
+from collections.abc import Callable
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from octave.auth.config import AuthSettings
@@ -308,3 +309,56 @@ async def test_login_purges_expired_rows(
         assert await session.scalar(
             select(func.count()).select_from(AuthSession)
         ) == 1
+
+
+def _capture_writes(statements: list[str]) -> Callable[..., None]:
+    """Engine-level before_cursor_execute captures raw SQL text."""
+
+    def _capture(conn, cursor, statement, parameters, context, executemany) -> None:  # noqa: ANN001
+        statements.append(statement)
+
+    return _capture
+
+
+async def test_resolve_session_emits_no_dml(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Issue #161: resolving a valid cookie must not write inside the
+    caller's transaction (deferred-BEGIN write upgrades deadlock in WAL)."""
+    async with session_factory() as session:
+        token = await _service(session).bootstrap_owner("alice", "pw", "Alice")
+        await session.commit()
+    async with session_factory() as session:
+        statements: list[str] = []
+        event.listen(
+            session.get_bind(),
+            "before_cursor_execute",
+            _capture_writes(statements),
+        )
+        assert await _service(session).resolve_session(token) is not None
+    writes = [s for s in statements if s.lstrip().upper().startswith(("UPDATE", "INSERT", "DELETE"))]
+    assert writes == []
+
+
+async def test_expired_token_read_does_not_delete(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Issue #161: the expired-row sweep must not run inside a read
+    transaction — login's purge_expired owns the sweep."""
+    async with session_factory() as session:
+        token = await _service(session).bootstrap_owner("alice", "pw", "Alice")
+        await session.commit()
+    async with session_factory() as session:
+        row = (await session.execute(select(AuthSession))).scalars().one()
+        row.expires_at = utcnow() - timedelta(seconds=1)
+        await session.commit()
+    async with session_factory() as session:
+        statements: list[str] = []
+        event.listen(
+            session.get_bind(),
+            "before_cursor_execute",
+            _capture_writes(statements),
+        )
+        assert await _service(session).resolve_session(token) is None
+    writes = [s for s in statements if s.lstrip().upper().startswith(("UPDATE", "INSERT", "DELETE"))]
+    assert writes == []

@@ -130,3 +130,39 @@ async def test_httpexception_shape_for_anonymous(probe_app: FastAPI) -> None:
     body = response.json()
     assert isinstance(body.get("detail"), str)
     assert response.status_code == HTTPException(401).status_code
+
+
+async def test_valid_cookie_slides_out_of_band(
+    probe_app: FastAPI, factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """Issue #161: the slide happens on a separate short transaction —
+    the request itself succeeds AND last_seen_at advances."""
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from octave.auth.service import AuthService
+    from octave.db.models.auth import AuthSession
+    from octave.db.models.base import utcnow
+
+    async with factory() as session:
+        await AuthStore(session).create_user(
+            username="alice", display_name="Alice", password_hash="dummy$pw"
+        )
+        await session.commit()
+        service = AuthService(
+            store=AuthStore(session), hasher=DummyHasher(), settings=AuthSettings()
+        )
+        token = await service.login("alice", "pw")
+        # age past the grace window
+        row = await session.scalar(select(AuthSession))
+        assert row is not None
+        row.last_seen_at = utcnow() - timedelta(minutes=5)
+        await session.commit()
+    async with await _client(probe_app) as client:
+        client.cookies.set(SESSION_COOKIE, token)
+        assert (await client.get("/whoami")).status_code == 200
+    async with factory() as session:
+        row = await session.scalar(select(AuthSession))
+        assert row is not None
+        assert row.last_seen_at > utcnow() - timedelta(minutes=5)

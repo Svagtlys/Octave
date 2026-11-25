@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from octave.auth.errors import UsernameTaken
@@ -93,76 +93,107 @@ async def test_get_by_token_hash_valid(
         assert row is not None and row.user_id == user.id
 
 
-async def test_get_by_token_hash_expired_returns_none_and_deletes(
+async def test_get_by_token_hash_expired_returns_none_row_survives(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     now = utcnow()
     async with session_factory() as session:
         store = AuthStore(session)
         user = await _make_user(store)
-        token = generate_token()
-        row = AuthSession(
-            id=hash_token(token),
-            user_id=user.id,
-            created_at=now - timedelta(days=100),
-            expires_at=now - timedelta(days=1),
-            last_seen_at=now - timedelta(days=100),
+        session.add(
+            AuthSession(
+                id="hx", user_id=user.id,
+                created_at=now - timedelta(days=100),
+                expires_at=now - timedelta(days=1),
+                last_seen_at=now - timedelta(days=100),
+            )
         )
-        session.add(row)
         await session.commit()
     async with session_factory() as session:
-        store = AuthStore(session)
-        assert await store.get_by_token_hash(hash_token(token), now) is None
-        await session.commit()
+        assert await AuthStore(session).get_by_token_hash("hx", now) is None
+        await session.rollback()
     async with session_factory() as session:
-        count = await session.scalar(
-            select(func.count()).select_from(AuthSession)
-        )
-        assert count == 0
+        assert await session.get(AuthSession, "hx") is not None  # sweep is login's job
 
 
-async def test_touch_session_slides_expiry(
+async def test_touch_by_hash_slides_expiry(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     now = utcnow()
     async with session_factory() as session:
         store = AuthStore(session)
         user = await _make_user(store)
-        token_row = await store.create_session(
-            user_id=user.id, token_hash="h1", now=now - timedelta(hours=1)
+        await store.create_session(
+            user_id=user.id, token_hash="h1", now=now - timedelta(hours=2)
         )
         await session.commit()
-        token_row_id = token_row.id
     async with session_factory() as session:
-        store = AuthStore(session)
-        row = await store.get_by_token_hash(token_row_id, now)
+        count = await AuthStore(session).touch_session_by_hash("h1", now=now)
+        await session.commit()
+        assert count == 1
+        row = await session.get(AuthSession, "h1")
         assert row is not None
-        await store.touch_session(row, now=now)
-        assert row.expires_at == now + timedelta(days=14)
         assert row.last_seen_at == now
+        assert row.expires_at == now + timedelta(days=14)
 
 
-async def test_touch_session_bounded_by_absolute_cap(
+async def test_touch_by_hash_bounded_by_absolute_cap(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    # SQLite strftime truncates to milliseconds; aligning `now` makes the
+    # SQL-computed cap round-trip exactly through the DATETIME processor.
+    now = utcnow().replace(microsecond=0)
+    async with session_factory() as session:
+        store = AuthStore(session)
+        user = await _make_user(store)
+        session.add(
+            AuthSession(
+                id="hc", user_id=user.id,
+                created_at=now - timedelta(days=89),
+                expires_at=now + timedelta(days=1),
+                last_seen_at=now - timedelta(days=2),
+            )
+        )
+        await session.commit()
+    async with session_factory() as session:
+        count = await AuthStore(session).touch_session_by_hash("hc", now=now)
+        await session.commit()
+        assert count == 1
+        row = await session.get(AuthSession, "hc")
+        assert row is not None
+        # created_at + 90d beats now + 14d here; strftime keeps microseconds
+        assert row.expires_at == now - timedelta(days=89) + timedelta(days=90)
+
+
+async def test_touch_by_hash_throttled_within_grace(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     now = utcnow()
     async with session_factory() as session:
         store = AuthStore(session)
         user = await _make_user(store)
-        row = AuthSession(
-            id="hc",
-            user_id=user.id,
-            created_at=now - timedelta(days=89),
-            expires_at=now + timedelta(days=1),
-            last_seen_at=now - timedelta(days=1),
+        await store.create_session(
+            user_id=user.id, token_hash="hg", now=now - timedelta(hours=2)
         )
-        session.add(row)
+        # simulate a touch 30 s ago
+        row = await session.get(AuthSession, "hg")
+        assert row is not None
+        row.last_seen_at = now - timedelta(seconds=30)
         await session.commit()
     async with session_factory() as session:
-        store = AuthStore(session)
-        await store.touch_session(row, now=now)
-        # created_at + 90d beats now + 14d here
-        assert row.expires_at == now - timedelta(days=89) + timedelta(days=90)
+        count = await AuthStore(session).touch_session_by_hash("hg", now=now)
+        await session.commit()
+        assert count == 0
+        row = await session.get(AuthSession, "hg")
+        assert row is not None
+        assert row.last_seen_at == now - timedelta(seconds=30)
+
+
+async def test_touch_by_hash_unknown_hash_returns_zero(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        assert await AuthStore(session).touch_session_by_hash("nope", now=utcnow()) == 0
 
 
 async def test_delete_sessions_for_user(

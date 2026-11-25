@@ -103,11 +103,15 @@ describe('ConversationList', () => {
   it('delete opens the confirm modal; Cancel keeps it closed, Confirm fires', async () => {
     const onConfirmDelete = vi.fn();
     renderList({}, { onConfirmDelete });
-    await userEvent.click(screen.getByRole('button', { name: /delete conversation trip planning/i }));
+    await userEvent.click(
+      screen.getByRole('button', { name: /delete conversation trip planning/i })
+    );
     expect(await screen.findByText(/this can't be undone/i)).toBeDefined();
     await userEvent.click(screen.getByRole('button', { name: /cancel/i }));
     expect(screen.queryByText(/this can't be undone/i)).toBeNull();
-    await userEvent.click(screen.getByRole('button', { name: /delete conversation trip planning/i }));
+    await userEvent.click(
+      screen.getByRole('button', { name: /delete conversation trip planning/i })
+    );
     await userEvent.click(await screen.findByRole('button', { name: /^delete$/i }));
     expect(onConfirmDelete).toHaveBeenCalledWith('a');
   });

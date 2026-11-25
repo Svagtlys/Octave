@@ -5,12 +5,7 @@
 // SessionChatView.loadLatest.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from './client';
-import {
-  createSession,
-  deleteSession,
-  fetchSessions,
-  type SessionSummary,
-} from './sessions';
+import { createSession, deleteSession, fetchSessions, type SessionSummary } from './sessions';
 
 export type ConversationsState = 'loading' | 'ready' | 'error';
 

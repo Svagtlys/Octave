@@ -17,9 +17,7 @@ export default function SessionsHubView() {
       <ConversationList
         conversations={conversations}
         activeId={null}
-        onSelect={(id) =>
-          void navigate({ to: '/sessions/$sessionId', params: { sessionId: id } })
-        }
+        onSelect={(id) => void navigate({ to: '/sessions/$sessionId', params: { sessionId: id } })}
         onNew={() => {
           void conversations.create().then((id) => {
             if (id) void navigate({ to: '/sessions/$sessionId', params: { sessionId: id } });

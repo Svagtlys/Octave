@@ -95,11 +95,11 @@ describe('useConversations', () => {
     vi.mocked(sessionsApi.deleteSession).mockResolvedValue();
     const { result } = renderHook(() => useConversations());
     await waitFor(() => expect(result.current.state).toBe('ready'));
-    let next: sessionsApi.SessionSummary | null = null;
+    const seen: { next: sessionsApi.SessionSummary | null } = { next: null };
     await act(async () => {
-      next = await result.current.remove('a');
+      seen.next = await result.current.remove('a');
     });
-    expect(next?.id).toBe('b');
+    expect(seen.next?.id).toBe('b');
     expect(result.current.sessions.map((s) => s.id)).toEqual(['b']);
   });
 
@@ -113,11 +113,13 @@ describe('useConversations', () => {
     vi.mocked(sessionsApi.deleteSession).mockResolvedValue();
     const { result } = renderHook(() => useConversations());
     await waitFor(() => expect(result.current.state).toBe('ready'));
-    let next: sessionsApi.SessionSummary | null = { id: 'x' } as sessionsApi.SessionSummary;
+    const seen: { next: sessionsApi.SessionSummary | null } = {
+      next: { id: 'x' } as sessionsApi.SessionSummary,
+    };
     await act(async () => {
-      next = await result.current.remove('a');
+      seen.next = await result.current.remove('a');
     });
-    expect(next).toBeNull();
+    expect(seen.next).toBeNull();
   });
 
   it('remove failure throws, keeps the row, sets the error', async () => {
@@ -127,9 +129,7 @@ describe('useConversations', () => {
       limit: 50,
       offset: 0,
     });
-    vi.mocked(sessionsApi.deleteSession).mockRejectedValue(
-      new ApiError(405, 'Method Not Allowed')
-    );
+    vi.mocked(sessionsApi.deleteSession).mockRejectedValue(new ApiError(405, 'Method Not Allowed'));
     const { result } = renderHook(() => useConversations());
     await waitFor(() => expect(result.current.state).toBe('ready'));
     await act(async () => {

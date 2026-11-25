@@ -336,7 +336,8 @@ async def test_resolve_session_emits_no_dml(
             _capture_writes(statements),
         )
         assert await _service(session).resolve_session(token) is not None
-    writes = [s for s in statements if s.lstrip().upper().startswith(("UPDATE", "INSERT", "DELETE"))]
+    dml = ("UPDATE", "INSERT", "DELETE")
+    writes = [s for s in statements if s.lstrip().upper().startswith(dml)]
     assert writes == []
 
 
@@ -360,5 +361,6 @@ async def test_expired_token_read_does_not_delete(
             _capture_writes(statements),
         )
         assert await _service(session).resolve_session(token) is None
-    writes = [s for s in statements if s.lstrip().upper().startswith(("UPDATE", "INSERT", "DELETE"))]
+    dml = ("UPDATE", "INSERT", "DELETE")
+    writes = [s for s in statements if s.lstrip().upper().startswith(dml)]
     assert writes == []

@@ -147,7 +147,9 @@ class AuthService:
 
     async def resolve_session(self, token: str) -> ResolvedSession | None:
         """Cookie → identity. ``None`` = anonymous (unknown/expired/disabled).
-        Valid hits slide the idle expiry."""
+
+        Pure read (issue #161): the idle-expiry slide moved out of the
+        request transaction to ``octave.auth.sliding``."""
         now = utcnow()
         row = await self._store.get_by_token_hash(hash_token(token), now)
         if row is None:
@@ -155,12 +157,6 @@ class AuthService:
         user = await self._store.get_user_by_id(row.user_id)
         if user is None or user.status != UserStatus.ACTIVE:
             return None
-        await self._store.touch_session(
-            row,
-            now=now,
-            idle_ttl_days=self._settings.idle_ttl_days,
-            absolute_ttl_days=self._settings.absolute_ttl_days,
-        )
         return user, row
 
     # -- administration -----------------------------------------------------

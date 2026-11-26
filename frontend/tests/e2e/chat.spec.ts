@@ -196,14 +196,20 @@ test.describe('conversation history (real backend)', () => {
     await expect(page.getByText('first conversation marker')).toBeVisible({ timeout: 10_000 });
 
     // The panel snapshot predates the commit; reload so its preview reflects
-    // the backend's last_message before asserting on panel rows.
+    // the backend's last_message before asserting on panel rows. Scope to the
+    // panel after reload: the marker also lives in the transcript and the row
+    // label there, which would trip strict mode.
     await page.reload();
-    await expect(page.getByText('first conversation marker')).toBeVisible({ timeout: 10_000 });
+    await expect(
+      page.locator('[class*="panel"] li button').filter({ hasText: 'first conversation marker' })
+    ).toBeVisible({ timeout: 10_000 });
 
-    // Second conversation via the panel.
+    // Second conversation via the panel. The regex check would pass
+    // instantly (we already sit on a /sessions/<id> URL), so poll until the
+    // create() round-trip has actually navigated away from the first one.
     await page.getByRole('button', { name: /new chat/i }).click();
-    await expect(page).toHaveURL(/\/sessions\/[a-z0-9]+$/);
-    expect(page.url()).not.toBe(firstUrl);
+    await expect.poll(() => page.url(), { timeout: 10_000 }).not.toBe(firstUrl);
+    expect(page.url()).toMatch(/\/sessions\/[a-z0-9]+$/);
     await expect(page.getByText(/No messages yet/)).toBeVisible();
 
     // Panel lists both; switching back restores the marker (transcript isolation).
@@ -211,7 +217,11 @@ test.describe('conversation history (real backend)', () => {
     await expect(items.filter({ hasText: /New conversation/ }).first()).toBeVisible();
     await items.filter({ hasText: /first conversation marker/ }).first().click();
     await expect(page).toHaveURL(firstUrl);
-    await expect(page.getByText('first conversation marker')).toBeVisible();
+    // Transcript isolation: the marker must return in the transcript itself,
+    // not merely sit in the panel row (label + preview match bare getByText).
+    await expect(
+      page.getByLabel('Chat messages').getByText('first conversation marker')
+    ).toBeVisible({ timeout: 10_000 });
   });
 
   // Delete e2e is blocked on the backend DELETE endpoint (separate issue).

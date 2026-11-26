@@ -41,15 +41,13 @@ test.describe('chat transcript view (real backend)', () => {
     test.skip(!up, `no backend at ${BACKEND} — see header of this spec`);
   });
 
-  test('authed empty session renders the transcript empty state in the shell', async ({
-    page,
-  }) => {
+  test('authed empty session renders the transcript empty state in the shell', async ({ page }) => {
     await page.goto('/');
     await page.waitForURL(/\/(login|setup)$/);
     if (/\/login$/.test(new URL(page.url()).pathname)) {
       test.info().annotations.push({
         type: 'note',
-        description: 'DB already bootstrapped — empty-session leg needs this spec\'s own owner.',
+        description: "DB already bootstrapped — empty-session leg needs this spec's own owner.",
       });
       test.skip();
       return;
@@ -72,14 +70,10 @@ test.describe('chat transcript view (real backend)', () => {
     // Still inside the shell — sidebar nav remains visible.
     await expect(page.getByRole('link', { name: /sessions/i })).toBeVisible();
     // No "Load older" affordance for an empty transcript.
-    await expect(
-      page.getByRole('button', { name: /load older messages/i })
-    ).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /load older messages/i })).toHaveCount(0);
   });
 
-  test('unknown session id renders the not-found error inside the shell', async ({
-    page,
-  }) => {
+  test('unknown session id renders the not-found error inside the shell', async ({ page }) => {
     // Sign in with the owner bootstrapped by the first test (serial mode).
     // Fresh cookie context -> the auth probe bounces to /login; wait for a
     // settled UI state (login form or authed shell), never a transient URL.
@@ -110,9 +104,7 @@ test.describe('chat transcript view (real backend)', () => {
     await expect(page.getByRole('link', { name: /sessions/i })).toBeVisible();
   });
 
-  test('sending a message echoes it into the transcript over the websocket', async ({
-    page,
-  }) => {
+  test('sending a message echoes it into the transcript over the websocket', async ({ page }) => {
     // Sign in with the owner bootstrapped by test 1 (same idiom as the
     // not-found test). The user_message echo is broadcast even when the
     // inference engine is down — the router commits the user_message before
@@ -163,9 +155,7 @@ test.describe('conversation history (real backend)', () => {
     test.skip(!up, `no backend at ${BACKEND} — see header of this spec`);
   });
 
-  test('new chat creates sessions, the panel lists and switches between them', async ({
-    page,
-  }) => {
+  test('new chat creates sessions, the panel lists and switches between them', async ({ page }) => {
     // Reuse the serially-bootstrapped owner from the describe above; sign in
     // the same way as the not-found test (login form -> shell).
     await page.goto('/');
@@ -215,7 +205,10 @@ test.describe('conversation history (real backend)', () => {
     // Panel lists both; switching back restores the marker (transcript isolation).
     const items = page.locator('[class*="panel"] li button');
     await expect(items.filter({ hasText: /New conversation/ }).first()).toBeVisible();
-    await items.filter({ hasText: /first conversation marker/ }).first().click();
+    await items
+      .filter({ hasText: /first conversation marker/ })
+      .first()
+      .click();
     await expect(page).toHaveURL(firstUrl);
     // Transcript isolation: the marker must return in the transcript itself,
     // not merely sit in the panel row (label + preview match bare getByText).
@@ -224,8 +217,63 @@ test.describe('conversation history (real backend)', () => {
     ).toBeVisible({ timeout: 10_000 });
   });
 
-  // Delete e2e is blocked on the backend DELETE endpoint (separate issue).
-  test.skip('deleting a conversation removes it from the panel', () => {
-    // Unskip + implement when DELETE /api/sessions/{id} ships.
+  test('deleting a conversation removes it from the panel', async ({ page }) => {
+    // Backend DELETE shipped in issue #160 — this was the deferred e2e.
+    await page.goto('/');
+    const signInButton = page.getByRole('button', { name: /^sign in$/i });
+    try {
+      await signInButton.waitFor({ state: 'visible', timeout: 10_000 });
+      await page.getByLabel('Username').fill(owner.username);
+      await page.getByLabel('Password').fill(owner.password);
+      await signInButton.click();
+    } catch {
+      test.info().annotations.push({
+        type: 'note',
+        description: 'Sign-in form never appeared — owner test did not bootstrap.',
+      });
+      test.skip();
+      return;
+    }
+    await expect(page).toHaveURL(/\/sessions$/, { timeout: 10_000 });
+
+    // Chat 1 — the survivor. Chat 2 — active, gets deleted.
+    await page.getByRole('button', { name: /new chat/i }).click();
+    await expect(page).toHaveURL(/\/sessions\/[a-z0-9]+$/);
+    const keepUrl = page.url();
+    await page.getByLabel('Message input').fill('keep-me marker');
+    await page.getByRole('button', { name: /^send$/i }).click();
+    await expect(page.getByText('keep-me marker')).toBeVisible({ timeout: 10_000 });
+
+    await page.getByRole('button', { name: /new chat/i }).click();
+    await expect.poll(() => page.url(), { timeout: 10_000 }).not.toBe(keepUrl);
+    const doomedUrl = page.url();
+    await page.getByLabel('Message input').fill('delete-me marker');
+    await page.getByRole('button', { name: /^send$/i }).click();
+    await expect(page.getByText('delete-me marker')).toBeVisible({ timeout: 10_000 });
+
+    // The panel snapshot predates the commit (same idiom as the new-chat
+    // test): reload so row labels reflect backend last_message — the trash
+    // aria-label becomes `Delete conversation delete-me marker`
+    // (ConversationList.tsx).
+    await page.reload();
+    await expect(page).toHaveURL(doomedUrl);
+    await expect(
+      page.locator('[class*="panel"] li button').filter({ hasText: 'delete-me marker' })
+    ).toBeVisible({ timeout: 10_000 });
+
+    // Delete the ACTIVE conversation via its panel row + confirm modal.
+    await page.getByRole('button', { name: 'Delete conversation delete-me marker' }).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByRole('button', { name: 'Delete', exact: true }).click();
+
+    // Row gone; navigation lands on the next-most-recent (chat 1).
+    await expect(
+      page.locator('[class*="panel"] li button').filter({ hasText: 'delete-me marker' })
+    ).toHaveCount(0);
+    await expect(page).toHaveURL(keepUrl, { timeout: 10_000 });
+    expect(page.url()).not.toBe(doomedUrl);
+    await expect(page.getByLabel('Chat messages').getByText('keep-me marker')).toBeVisible({
+      timeout: 10_000,
+    });
   });
 });

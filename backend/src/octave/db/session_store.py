@@ -16,9 +16,10 @@ without ``GROUP BY``; the preview subquery rides the unique index
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from octave.db.models import Event, Participant, Session, SessionParticipant
@@ -210,6 +211,27 @@ class SessionStore:
             select(Session.id).where(Session.id == session_id)
         )
         return "missing" if exists is None else "denied"
+
+    async def get_session_owner(self, session_id: str) -> str | None:
+        """``created_by_user_id`` for the row, or ``None`` when absent (issue
+        #160). The DELETE guard's read half: the route compares the owner to
+        the caller (owner-only delete; participant reads stay resolve_access).
+        Never commits."""
+        owner: str | None = await self._session.scalar(
+            select(Session.created_by_user_id).where(Session.id == session_id)
+        )
+        return owner
+
+    async def delete_session(self, session_id: str) -> int:
+        """Hard delete of the sessions row; returns rowcount (issue #160).
+        DB-level FK CASCADE (PRAGMA foreign_keys=ON) removes
+        session_participants, events, agent_instances and child sessions —
+        no app-side child deletes. Bulk statement: no ORM object load.
+        Never commits."""
+        result = await self._session.execute(
+            delete(Session).where(Session.id == session_id)
+        )
+        return int(cast(CursorResult[Any], result).rowcount)
 
     async def list_message_page(
         self, session_id: str, *, after_seq: int, limit: int

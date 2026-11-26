@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from octave.db.event_store import EventStore
 from octave.db.models import (
     Agent,
+    AgentInstance,
     Event,
     Participant,
     Session,
@@ -802,3 +803,126 @@ async def test_transcript_row_thinking_null_for_user_message(
             "s_1", after_seq=0, limit=10
         )
         assert rows[0].thinking is None
+
+
+# -- get_session_owner / delete_session (issue #160) ---------------------------
+
+
+async def test_get_session_owner_hit_and_miss(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        store = SessionStore(session)
+        assert await store.get_session_owner("s_1") == "u_1"
+        assert await store.get_session_owner("s_ghost") is None
+
+
+async def test_delete_session_removes_row_and_returns_rowcount(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        await session.commit()
+        assert await SessionStore(session).delete_session("s_1") == 1
+        await session.commit()
+    async with session_factory() as check:
+        assert await check.get(Session, "s_1") is None
+        assert await SessionStore(check).delete_session("s_1") == 0
+
+
+async def test_delete_session_never_commits(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """An uncommitted delete is invisible to a second session (store contract,
+    mirrors test_create_session_never_commits)."""
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        await session.commit()
+    async with session_factory() as session:
+        await SessionStore(session).delete_session("s_1")
+        # no commit — the context manager closes without committing
+    async with session_factory() as check:
+        assert await check.get(Session, "s_1") is not None
+
+
+async def test_delete_session_cascades_children(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Schema-level ondelete=CASCADE (PRAGMA foreign_keys=ON via
+    create_sqlite_engine) removes membership, events, agent instances and the
+    child session; unrelated rows and participant identities survive."""
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        session.add(Agent(id="a_1", name="Helper"))
+        session.add(Participant(id="p_agent", agent_id="a_1", label="Helper"))
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        await _make_session(
+            session, session_id="s_other", owner_user_id="u_1", created_at=_dt(1)
+        )
+        child = Session(
+            id="s_child",
+            created_by_user_id="u_1",
+            status="active",
+            parent_session_id="s_1",
+        )
+        session.add(child)
+        session.add(
+            SessionParticipant(
+                session_id="s_1", participant_id="p_agent", role="speaker"
+            )
+        )
+        session.add(
+            AgentInstance(id="ai_1", agent_id="a_1", session_id="s_1")
+        )
+        await _append(
+            session, "s_1", EventKind.USER_MESSAGE, "hi", author="p_1"
+        )
+        await _append(
+            session, "s_child", EventKind.USER_MESSAGE, "child hi", author="p_1"
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        assert await SessionStore(session).delete_session("s_1") == 1
+        await session.commit()
+
+    async with session_factory() as check:
+        assert await check.get(Session, "s_1") is None
+        assert await check.get(Session, "s_child") is None
+        assert await check.get(Session, "s_other") is not None
+        for model, session_id in [
+            (SessionParticipant, "s_1"),
+            (Event, "s_1"),
+            (Event, "s_child"),
+            (AgentInstance, "s_1"),
+        ]:
+            count = await check.scalar(
+                select(func.count()).select_from(model).where(
+                    model.session_id == session_id
+                )
+            )
+            assert count == 0, model
+        # Identity rows are NOT session data — they survive.
+        assert await check.get(Participant, "p_1") is not None
+        assert await check.get(Participant, "p_agent") is not None
+        assert await check.get(Agent, "a_1") is not None

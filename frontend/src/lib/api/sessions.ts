@@ -75,10 +75,9 @@ export async function createSession(title?: string): Promise<SessionSummary> {
 }
 
 /**
- * Delete a session. STUB: the backend endpoint (DELETE /api/sessions/{id})
- * is a separate issue — until it lands the server answers 404/405 and the
- * caller surfaces the ApiError. No fake success: the UI stays honest and
- * needs zero changes when the endpoint ships.
+ * Delete a session permanently (issue #160). Owner-only: 404 unknown id,
+ * 403 exists-but-not-owner, 204 success (empty body). Child rows go via
+ * FK cascade server-side.
  */
 export async function deleteSession(sessionId: string): Promise<void> {
   await deleteRequest<void>(`/api/sessions/${encodeURIComponent(sessionId)}`);

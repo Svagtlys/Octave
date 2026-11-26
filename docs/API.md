@@ -35,3 +35,11 @@ Three mutually-exclusive paging modes (`422` if combined):
 `{ items, next_cursor, prev_cursor }` (`prev_cursor` only set in backward
 mode). Errors: `401` unauthenticated, `404` unknown session, `403` caller is
 neither owner nor current participant, `422` invalid params.
+
+### `DELETE /api/sessions/{id}`
+
+Hard delete an owned session (issue #160). Owner-only — a current
+participant may read but not destroy. Child rows (`session_participants`,
+`events`, `agent_instances`, child sessions) are removed by FK cascade.
+`204` empty body on success. Errors: `401` unauthenticated, `404` unknown
+session (repeat delete included), `403` caller is not the owner.

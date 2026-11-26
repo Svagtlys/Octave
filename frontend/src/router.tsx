@@ -15,6 +15,7 @@ import LoginView from './views/LoginView';
 import SetupView from './views/SetupView';
 import GalleryView from './views/GalleryView';
 import SessionChatView from './views/SessionChatView';
+import SessionsHubView from './views/SessionsHubView';
 
 function NotFoundView() {
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -81,11 +82,14 @@ const indexRoute = createRoute({
   },
 });
 
+/** Session hub (issue #46): conversation list + New chat; replaces the
+ * placeholder. "/" keeps redirecting here, so authed users land on their
+ * conversations by default. */
 const sessionsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/sessions',
   staticData: { title: 'Sessions' },
-  component: () => <PlaceholderView title="Sessions" note="Chat interface lands in issue #7." />,
+  component: SessionsHubView,
 });
 
 /**

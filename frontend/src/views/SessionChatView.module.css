@@ -1,4 +1,17 @@
-.container {
+.layout {
+  display: flex;
+  gap: var(--space-5);
+  align-items: flex-start;
+}
+.panelColumn {
+  width: 250px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+}
+.chatColumn {
+  flex: 1;
+  min-width: 0;
   max-width: 760px;
 }
 

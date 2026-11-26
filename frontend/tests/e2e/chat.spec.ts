@@ -151,3 +151,81 @@ test.describe('chat transcript view (real backend)', () => {
     await expect(page.getByLabel('Message input')).toHaveValue('');
   });
 });
+
+test.describe('conversation history (real backend)', () => {
+  test.beforeEach(async ({ request }) => {
+    let up = false;
+    try {
+      up = (await request.get(`${BACKEND}/api/health`)).ok();
+    } catch {
+      up = false;
+    }
+    test.skip(!up, `no backend at ${BACKEND} — see header of this spec`);
+  });
+
+  test('new chat creates sessions, the panel lists and switches between them', async ({
+    page,
+  }) => {
+    // Reuse the serially-bootstrapped owner from the describe above; sign in
+    // the same way as the not-found test (login form -> shell).
+    await page.goto('/');
+    const signInButton = page.getByRole('button', { name: /^sign in$/i });
+    try {
+      await signInButton.waitFor({ state: 'visible', timeout: 10_000 });
+      await page.getByLabel('Username').fill(owner.username);
+      await page.getByLabel('Password').fill(owner.password);
+      await signInButton.click();
+    } catch {
+      test.info().annotations.push({
+        type: 'note',
+        description: 'Sign-in form never appeared — owner test did not bootstrap.',
+      });
+      test.skip();
+      return;
+    }
+    await expect(page).toHaveURL(/\/sessions$/, { timeout: 10_000 });
+
+    // Hub: start conversation one via the panel button.
+    await page.getByRole('button', { name: /new chat/i }).click();
+    await expect(page).toHaveURL(/\/sessions\/[a-z0-9]+$/);
+    const firstUrl = page.url();
+
+    // Send over the WS so the first conversation has a distinguishable row.
+    await page.getByLabel('Message input').fill('first conversation marker');
+    await page.getByRole('button', { name: /^send$/i }).click();
+    await expect(page.getByText('first conversation marker')).toBeVisible({ timeout: 10_000 });
+
+    // The panel snapshot predates the commit; reload so its preview reflects
+    // the backend's last_message before asserting on panel rows. Scope to the
+    // panel after reload: the marker also lives in the transcript and the row
+    // label there, which would trip strict mode.
+    await page.reload();
+    await expect(
+      page.locator('[class*="panel"] li button').filter({ hasText: 'first conversation marker' })
+    ).toBeVisible({ timeout: 10_000 });
+
+    // Second conversation via the panel. The regex check would pass
+    // instantly (we already sit on a /sessions/<id> URL), so poll until the
+    // create() round-trip has actually navigated away from the first one.
+    await page.getByRole('button', { name: /new chat/i }).click();
+    await expect.poll(() => page.url(), { timeout: 10_000 }).not.toBe(firstUrl);
+    expect(page.url()).toMatch(/\/sessions\/[a-z0-9]+$/);
+    await expect(page.getByText(/No messages yet/)).toBeVisible();
+
+    // Panel lists both; switching back restores the marker (transcript isolation).
+    const items = page.locator('[class*="panel"] li button');
+    await expect(items.filter({ hasText: /New conversation/ }).first()).toBeVisible();
+    await items.filter({ hasText: /first conversation marker/ }).first().click();
+    await expect(page).toHaveURL(firstUrl);
+    // Transcript isolation: the marker must return in the transcript itself,
+    // not merely sit in the panel row (label + preview match bare getByText).
+    await expect(
+      page.getByLabel('Chat messages').getByText('first conversation marker')
+    ).toBeVisible({ timeout: 10_000 });
+  });
+
+  // Delete e2e is blocked on the backend DELETE endpoint (separate issue).
+  test.skip('deleting a conversation removes it from the panel', () => {
+    // Unskip + implement when DELETE /api/sessions/{id} ships.
+  });
+});

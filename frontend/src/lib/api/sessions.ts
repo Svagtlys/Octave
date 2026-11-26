@@ -3,7 +3,7 @@
 // Chat opens at the newest page (`end=true`) and walks backward via
 // `before_seq`; both render items oldest-first within the page and carry
 // `prev_cursor` (null = no older messages remain).
-import { get } from './client';
+import { get, post, deleteRequest } from './client';
 
 export interface TranscriptMessage {
   seq: number;
@@ -39,4 +39,47 @@ export async function fetchOlderMessages(
 ): Promise<TranscriptPage> {
   const params = new URLSearchParams({ before_seq: String(beforeSeq) });
   return get<TranscriptPage>(`/api/sessions/${encodeURIComponent(sessionId)}/messages?${params}`);
+}
+
+// --- session list / create / delete (issue #46) ---
+// Mirrors backend routes/sessions.py: GET envelope {items,total,limit,offset},
+// most-recently-active first; POST 201 with {title|null}; preview pre-truncated
+// to 140 chars at the route boundary.
+
+export interface SessionSummary {
+  id: string;
+  title: string | null;
+  /** ISO-8601 datetime. */
+  created_at: string;
+  last_activity: string;
+  /** Backend-truncated preview (<= 140 chars); null when no message events. */
+  last_message: string | null;
+}
+
+export interface SessionListPage {
+  items: SessionSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** The caller's sessions, most-recently-active first. */
+export async function fetchSessions(limit = 50, offset = 0): Promise<SessionListPage> {
+  const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+  return get<SessionListPage>(`/api/sessions?${params}`);
+}
+
+/** Create a session; 201 -> the new row (last_activity = created_at). */
+export async function createSession(title?: string): Promise<SessionSummary> {
+  return post<SessionSummary>('/api/sessions', { title: title ?? null });
+}
+
+/**
+ * Delete a session. STUB: the backend endpoint (DELETE /api/sessions/{id})
+ * is a separate issue — until it lands the server answers 404/405 and the
+ * caller surfaces the ApiError. No fake success: the UI stays honest and
+ * needs zero changes when the endpoint ships.
+ */
+export async function deleteSession(sessionId: string): Promise<void> {
+  await deleteRequest<void>(`/api/sessions/${encodeURIComponent(sessionId)}`);
 }

@@ -25,6 +25,30 @@ const apiMocks = vi.hoisted(() => ({
   setUnauthorizedHandler: vi.fn(),
 }));
 vi.mock('../src/lib/api/client', () => apiMocks);
+// The /sessions hub mounts ConversationList -> useConversations; keep the
+// list hermetic with a fixed one-row page.
+const sessionsMocks = vi.hoisted(() => ({
+  fetchSessions: vi.fn(),
+  fetchLatestMessages: vi.fn(),
+  fetchOlderMessages: vi.fn(),
+  createSession: vi.fn(),
+  deleteSession: vi.fn(),
+}));
+vi.mock('../src/lib/api/sessions', () => sessionsMocks);
+vi.mocked(sessionsMocks.fetchSessions).mockResolvedValue({
+  items: [
+    {
+      id: 'hub-1',
+      title: 'Hub conversation',
+      created_at: '2026-11-20T00:00:00Z',
+      last_activity: '2026-11-24T12:00:00Z',
+      last_message: 'hello',
+    },
+  ],
+  total: 1,
+  limit: 50,
+  offset: 0,
+});
 vi.mocked(fetchHealth).mockResolvedValue({ status: 'ok' });
 vi.mocked(fetchAuthStatus).mockResolvedValue({ setup_required: false });
 vi.mocked(fetchMe).mockResolvedValue({
@@ -66,6 +90,12 @@ describe('App routing', () => {
   it('renders the Settings placeholder at /settings', async () => {
     renderAt('/settings');
     expect(await screen.findByRole('heading', { level: 2, name: 'Settings' })).toBeDefined();
+  });
+
+  it('renders the conversation hub at /sessions with sessions listed', async () => {
+    renderAt('/sessions');
+    expect(await screen.findByRole('heading', { level: 2, name: 'Sessions' })).toBeDefined();
+    expect(await screen.findByRole('button', { name: 'Hub conversation' })).toBeDefined();
   });
 
   it('renders a Not Found view for unknown routes', async () => {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import { ApiError } from '../lib/api/client';
 import { fetchLatestMessages, fetchOlderMessages } from '../lib/api/sessions';
 import type { TranscriptMessage } from '../lib/api/sessions';
@@ -6,6 +7,8 @@ import { useSessionSocket, type FrameSink, type SocketFrame } from '../lib/api/u
 import { MessageList } from '../components/chat/MessageList';
 import { ChatInput } from '../components/chat/ChatInput';
 import { ToolCallCard } from '../components/chat/ToolCallCard';
+import { ConversationList } from '../components/chat/ConversationList';
+import { useConversations } from '../lib/api/useConversations';
 import { Button } from '../components/ui';
 import styles from './SessionChatView.module.css';
 
@@ -235,75 +238,126 @@ export default function SessionChatView({ sessionId }: SessionChatViewProps) {
     [sendUserMessage]
   );
 
-  if (state === 'loading') {
-    return (
-      <p className={styles.status} role="status">
-        Loading transcript…
-      </p>
-    );
-  }
+  // Conversation-history panel (issue #46): the list survives the
+  // transcript's loading/error states, so the early returns moved inside
+  // the chat column below.
+  const navigate = useNavigate();
+  const conversations = useConversations();
 
-  if (state === 'error' && messages.length === 0) {
-    return (
-      <div className={styles.errorBox}>
-        <p role="alert">{error}</p>
-        <Button variant="secondary" size="sm" onClick={loadLatest}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
+  const handleSelect = useCallback(
+    (id: string) => {
+      if (id !== sessionId) {
+        void navigate({ to: '/sessions/$sessionId', params: { sessionId: id } });
+      }
+    },
+    [navigate, sessionId]
+  );
+
+  const handleNew = useCallback(() => {
+    void conversations.create().then((id) => {
+      if (id) void navigate({ to: '/sessions/$sessionId', params: { sessionId: id } });
+    });
+  }, [conversations, navigate]);
+
+  const handleConfirmDelete = useCallback(
+    async (id: string) => {
+      try {
+        const next = await conversations.remove(id);
+        // Only the open conversation navigates; deleting another row is a
+        // pure list edit. remove() throws on failure, so we never navigate
+        // a failed delete.
+        if (id === sessionId) {
+          void navigate(
+            next
+              ? { to: '/sessions/$sessionId', params: { sessionId: next.id } }
+              : { to: '/sessions' }
+          );
+        }
+      } catch {
+        // Inline error already set by the hook.
+      }
+    },
+    [conversations, navigate, sessionId]
+  );
 
   return (
-    <div className={styles.container}>
-      {prevCursor !== null && (
-        <div className={styles.loadMore}>
-          <Button variant="ghost" size="sm" onClick={loadOlder} disabled={prepending}>
-            {prepending ? 'Loading…' : 'Load older messages'}
-          </Button>
-        </div>
-      )}
-      {error && (
-        <p className={styles.inlineError} role="alert">
-          {error}
-        </p>
-      )}
-      <MessageList messages={messages} />
-      {awaitingReply && !provisional.thinking && !provisional.text && (
-        <p className={styles.thinking} role="status">
-          Agent is thinking…
-        </p>
-      )}
-      {(provisional.thinking || provisional.text) && (
-        <div className={styles.streaming} role="status" aria-live="polite">
-          {provisional.thinking && (
-            <details className={styles.thinkingBlock} open={!provisional.text}>
-              <summary>Thinking…</summary>
-              <div className={styles.thinkingContent}>{provisional.thinking}</div>
-            </details>
-          )}
-          <div className={styles.streamingText}>{provisional.text}</div>
-        </div>
-      )}
-      {provisional.cards.length > 0 && (
-        <div className={styles.toolCards}>
-          {provisional.cards.map((card) => (
-            <ToolCallCard
-              key={card.callId}
-              name={card.name}
-              status={card.done ? (card.is_error ? 'error' : 'done') : 'calling'}
-              arguments={card.arguments}
-              output={card.content}
-            />
-          ))}
-        </div>
-      )}
-      <ChatInput onSend={handleSend} disabled={status !== 'open'} />
-      {status !== 'open' && (
-        <p className={styles.disconnected} role="status">
-          Disconnected — retrying…
-        </p>
-      )}
+    <div className={styles.layout}>
+      <div className={styles.panelColumn}>
+        <ConversationList
+          conversations={conversations}
+          activeId={sessionId}
+          onSelect={handleSelect}
+          onNew={handleNew}
+          onConfirmDelete={(id) => void handleConfirmDelete(id)}
+        />
+      </div>
+      <div className={styles.chatColumn}>
+        {state === 'loading' && (
+          <p className={styles.status} role="status">
+            Loading transcript…
+          </p>
+        )}
+        {state === 'error' && messages.length === 0 && (
+          <div className={styles.errorBox}>
+            <p role="alert">{error}</p>
+            <Button variant="secondary" size="sm" onClick={loadLatest}>
+              Retry
+            </Button>
+          </div>
+        )}
+        {state === 'ready' && (
+          <>
+            {prevCursor !== null && (
+              <div className={styles.loadMore}>
+                <Button variant="ghost" size="sm" onClick={loadOlder} disabled={prepending}>
+                  {prepending ? 'Loading…' : 'Load older messages'}
+                </Button>
+              </div>
+            )}
+            {error && (
+              <p className={styles.inlineError} role="alert">
+                {error}
+              </p>
+            )}
+            <MessageList messages={messages} />
+            {awaitingReply && !provisional.thinking && !provisional.text && (
+              <p className={styles.thinking} role="status">
+                Agent is thinking…
+              </p>
+            )}
+            {(provisional.thinking || provisional.text) && (
+              <div className={styles.streaming} role="status" aria-live="polite">
+                {provisional.thinking && (
+                  <details className={styles.thinkingBlock} open={!provisional.text}>
+                    <summary>Thinking…</summary>
+                    <div className={styles.thinkingContent}>{provisional.thinking}</div>
+                  </details>
+                )}
+                <div className={styles.streamingText}>{provisional.text}</div>
+              </div>
+            )}
+            {provisional.cards.length > 0 && (
+              <div className={styles.toolCards}>
+                {provisional.cards.map((card) => (
+                  <ToolCallCard
+                    key={card.callId}
+                    name={card.name}
+                    status={card.done ? (card.is_error ? 'error' : 'done') : 'calling'}
+                    arguments={card.arguments}
+                    output={card.content}
+                  />
+                ))}
+              </div>
+            )}
+            <ChatInput onSend={handleSend} disabled={status !== 'open'} />
+            {status !== 'open' && (
+              <p className={styles.disconnected} role="status">
+                Disconnected — retrying…
+              </p>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

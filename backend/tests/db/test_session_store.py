@@ -8,7 +8,7 @@ then re-timed for determinism.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from octave.db.event_store import EventStore

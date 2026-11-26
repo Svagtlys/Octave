@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from octave.auth.config import AuthSettings
@@ -19,7 +19,15 @@ from octave.auth.deps import SESSION_COOKIE
 from octave.auth.passwords import DummyHasher
 from octave.db._bootstrap import create_sqlite_engine
 from octave.db.event_store import EventStore
-from octave.db.models import Base, Participant, Session, SessionParticipant
+from octave.db.models import (
+    Agent,
+    AgentInstance,
+    Base,
+    Event,
+    Participant,
+    Session,
+    SessionParticipant,
+)
 from octave.db.types import EventKind
 from octave.middleware import add_error_handlers
 from octave.routes.auth import router as auth_router
@@ -558,3 +566,102 @@ async def test_messages_pagination_validation(app_and_factory) -> None:
             f"/api/sessions/{session_id}/messages?before_seq=2&end=true",
         ):
             assert (await client.get(url)).status_code == 422, url
+
+
+# -- DELETE /sessions/{id} (issue #160) -----------------------------------------
+
+
+async def test_delete_requires_auth(app_and_factory) -> None:
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        response = await client.delete("/api/sessions/whatever")
+        assert response.status_code == 401
+
+
+async def test_delete_unknown_session_404(app_and_factory) -> None:
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        response = await client.delete("/api/sessions/nope")
+        assert response.status_code == 404
+        # The app-wide 404 exception handler wraps HTTPException details as
+        # "404: <detail>" (middleware.py); the route's detail string itself is
+        # "Session not found" (same literal as the messages route).
+        assert "Session not found" in response.json()["detail"]
+
+
+async def test_delete_non_owner_participant_403(app_and_factory) -> None:
+    """A live participant may read (issue #151) but must not destroy the
+    owner's transcript — delete is owner-only."""
+    app, factory = app_and_factory
+    async with await _client(app) as owner:
+        await _bootstrap(owner)  # alice
+        bob_id = await _create_member(owner, "bob")
+        session_id = (await owner.post("/api/sessions", json={})).json()["id"]
+        bob_pid = await _participant_id(factory, bob_id)
+    async with factory() as db:
+        db.add(SessionParticipant(session_id=session_id, participant_id=bob_pid))
+        await db.commit()
+    async with await _client(app) as bob:
+        await _login(bob, "bob")
+        response = await bob.delete(f"/api/sessions/{session_id}")
+        assert response.status_code == 403
+    async with factory() as db:
+        assert await db.get(Session, session_id) is not None  # untouched
+
+
+async def test_delete_owner_removes_session_and_children_204(
+    app_and_factory,
+) -> None:
+    """204 empty body; participants/events/agent_instances rows cascade away
+    and the session disappears from the caller's list."""
+    app, factory = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        me = (await client.get("/api/auth/me")).json()
+        session_id = (await client.post("/api/sessions", json={})).json()["id"]
+        alice = await _participant_id(factory, me["id"])
+    async with factory() as db:
+        db.add(Agent(id="a_1", name="Helper"))
+        db.add(Participant(id="p_agent", agent_id="a_1", label="Helper"))
+        db.add(AgentInstance(id="ai_1", agent_id="a_1", session_id=session_id))
+        await db.commit()
+    await _seed_activity(
+        factory,
+        session_id,
+        [
+            (EventKind.USER_MESSAGE, "hi", _dt(5)),
+            (EventKind.TOOL_CALL, "tool", _dt(6)),
+        ],
+        author=alice,
+    )
+    async with await _client(app) as client:
+        await _bootstrap_login(client)
+        response = await client.delete(f"/api/sessions/{session_id}")
+        assert response.status_code == 204
+        assert response.content == b""
+        listing = (await client.get("/api/sessions")).json()
+        assert [item["id"] for item in listing["items"]] == []
+        assert listing["total"] == 0
+
+    async with factory() as db:
+        assert await db.get(Session, session_id) is None
+        for model in (SessionParticipant, Event, AgentInstance):
+            count = await db.scalar(
+                select(func.count())
+                .select_from(model)
+                .where(model.session_id == session_id)
+            )
+            assert count == 0, model
+
+
+async def test_delete_repeat_404(app_and_factory) -> None:
+    """Repeat delete answers 404 like never-existed (decision 2)."""
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        session_id = (await client.post("/api/sessions", json={})).json()["id"]
+        assert (await client.delete(f"/api/sessions/{session_id}")).status_code == 204
+        response = await client.delete(f"/api/sessions/{session_id}")
+        assert response.status_code == 404
+        assert "Session not found" in response.json()["detail"]

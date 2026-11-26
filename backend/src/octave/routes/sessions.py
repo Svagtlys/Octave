@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -206,3 +206,27 @@ def _to_message_response(row: TranscriptMessageRow) -> TranscriptMessageResponse
         timestamp=row.created_at,
         thinking=row.thinking,
     )
+
+
+@router.delete("/{session_id}", status_code=204)
+async def delete_session(
+    session_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+    session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    """Hard delete an owned session (issue #160). Owner-only: a live
+    participant may read but never destroy the transcript. 404 unknown id
+    (repeat delete included), 403 exists-but-not-owner, 204 on success with
+    an empty body. Children (participants/events/agent_instances/child
+    sessions) go via schema-level FK CASCADE; the route owns the commit."""
+    store = SessionStore(session)
+    owner = await store.get_session_owner(session_id)
+    if owner is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if owner != user.id:
+        raise HTTPException(
+            status_code=403, detail="Only the owner can delete this session"
+        )
+    await store.delete_session(session_id)
+    await session.commit()
+    return Response(status_code=204)

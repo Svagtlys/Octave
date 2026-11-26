@@ -211,6 +211,15 @@ class SessionStore:
         )
         return "missing" if exists is None else "denied"
 
+    async def get_session_owner(self, session_id: str) -> str | None:
+        """``created_by_user_id`` for the row, or ``None`` when absent (issue
+        #160). The DELETE guard's read half: the route compares the owner to
+        the caller (owner-only delete; participant reads stay resolve_access).
+        Never commits."""
+        return await self._session.scalar(
+            select(Session.created_by_user_id).where(Session.id == session_id)
+        )
+
     async def list_message_page(
         self, session_id: str, *, after_seq: int, limit: int
     ) -> list[TranscriptMessageRow]:

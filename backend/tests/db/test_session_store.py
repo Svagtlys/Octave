@@ -802,3 +802,21 @@ async def test_transcript_row_thinking_null_for_user_message(
             "s_1", after_seq=0, limit=10
         )
         assert rows[0].thinking is None
+
+
+# -- get_session_owner / delete_session (issue #160) ---------------------------
+
+
+async def test_get_session_owner_hit_and_miss(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session:
+        await _seed_user(
+            session, user_id="u_1", participant_id="p_1", display_name="Alice"
+        )
+        await _make_session(
+            session, session_id="s_1", owner_user_id="u_1", created_at=_dt(1)
+        )
+        store = SessionStore(session)
+        assert await store.get_session_owner("s_1") == "u_1"
+        assert await store.get_session_owner("s_ghost") is None

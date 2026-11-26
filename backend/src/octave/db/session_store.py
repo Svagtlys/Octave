@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from octave.db.models import Event, Participant, Session, SessionParticipant
@@ -219,6 +219,17 @@ class SessionStore:
         return await self._session.scalar(
             select(Session.created_by_user_id).where(Session.id == session_id)
         )
+
+    async def delete_session(self, session_id: str) -> int:
+        """Hard delete of the sessions row; returns rowcount (issue #160).
+        DB-level FK CASCADE (PRAGMA foreign_keys=ON) removes
+        session_participants, events, agent_instances and child sessions —
+        no app-side child deletes. Bulk statement: no ORM object load.
+        Never commits."""
+        result = await self._session.execute(
+            delete(Session).where(Session.id == session_id)
+        )
+        return int(result.rowcount or 0)
 
     async def list_message_page(
         self, session_id: str, *, after_seq: int, limit: int

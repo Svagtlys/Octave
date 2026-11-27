@@ -15,14 +15,17 @@ from httpx import ASGITransport, AsyncClient
 from octave.auth.config import AuthSettings
 from octave.auth.passwords import DummyHasher
 from octave.db.config import DbConfig
+from octave.db.event_store import EventStore
 from octave.db.models import Base, Session, VaultItem
 from octave.db.session_store import SessionStore
 from octave.db.sqlite_adapter import SqliteVecAdapter
-from octave.db.types import VaultKind
+from octave.db.types import EventKind, VaultKind
 from octave.db.vault_store import VaultStore
+from octave.inference.types import CompletionResult
 from octave.middleware import add_error_handlers
 from octave.routes.auth import router as auth_router
 from octave.routes.summaries import router as summaries_router
+from tests.agent.fakes import ScriptedAdapter
 
 
 def _dt(day: int) -> datetime:
@@ -315,6 +318,121 @@ async def test_detail_returns_full_content_from_cache(app_and_factory) -> None:
     assert body["summary"]["title"] == "Weather"
     assert body["summary"]["content"] == long_body  # full, not truncated
     assert body["summary"]["model_name"] == "m-1"
+
+
+# -- refresh ------------------------------------------------------------------
+
+
+def _completion(text: str) -> CompletionResult:
+    return CompletionResult(text=text, model="scripted-1", finish_reason="stop")
+
+
+async def _seed_one_event(factory, session_id: str) -> None:
+    async with factory() as session:
+        await EventStore(session).append(
+            session_id, EventKind.USER_MESSAGE, payload={"content": "hello"}
+        )
+        await session.commit()
+
+
+async def test_refresh_requires_auth(app_and_factory) -> None:
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        response = await client.post("/api/session-summaries/s_1/refresh")
+        assert response.status_code == 401
+
+
+async def test_refresh_happy_path_persists_and_returns_detail(
+    app_and_factory,
+) -> None:
+    app, factory = app_and_factory
+    app.state.inference_adapter = ScriptedAdapter(
+        [_completion("Title: Greeting\nAlice greeted; Echo replied.")]
+    )
+    app.state.inference_adapter_name = "fake"
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        alice = await _alice_id(client)
+        await _create_session(factory, "s_1", owner=alice)
+        await _seed_one_event(factory, "s_1")
+        response = await client.post("/api/session-summaries/s_1/refresh")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"]["title"] == "Greeting"
+    assert body["summary"]["content"] == "Alice greeted; Echo replied."
+    assert body["summary"]["model_name"] == "scripted-1"
+    # Committed: a fresh session sees the vault item.
+    async with factory() as session:
+        item = await VaultStore(app.state.db_adapter, session).get(
+            "session_summary:s_1"
+        )
+    assert item is not None and item.name == "Greeting"
+
+
+async def test_refresh_force_regenerates_over_fresh_cache(app_and_factory) -> None:
+    app, factory = app_and_factory
+    scripted = ScriptedAdapter(
+        [_completion("Title: One\nfirst."), _completion("Title: Two\nsecond.")]
+    )
+    app.state.inference_adapter = scripted
+    app.state.inference_adapter_name = "fake"
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        alice = await _alice_id(client)
+        await _create_session(factory, "s_1", owner=alice)
+        await _seed_one_event(factory, "s_1")
+        first = await client.post("/api/session-summaries/s_1/refresh")
+        second = await client.post("/api/session-summaries/s_1/refresh")
+    assert first.json()["summary"]["title"] == "One"
+    assert second.json()["summary"]["title"] == "Two"  # force=True, cache bypassed
+
+
+async def test_refresh_empty_transcript_returns_null(app_and_factory) -> None:
+    app, factory = app_and_factory
+    scripted = ScriptedAdapter([])  # queue empty: any call would AssertionError
+    app.state.inference_adapter = scripted
+    app.state.inference_adapter_name = "fake"
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        alice = await _alice_id(client)
+        await _create_session(factory, "s_1", owner=alice)
+        response = await client.post("/api/session-summaries/s_1/refresh")
+    assert response.status_code == 200
+    assert response.json() == {"session_id": "s_1", "summary": None}
+
+
+async def test_refresh_summary_error_maps_to_502(app_and_factory) -> None:
+    app, factory = app_and_factory
+    # empty content -> SummaryError
+    app.state.inference_adapter = ScriptedAdapter([_completion("")])
+    app.state.inference_adapter_name = "fake"
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        alice = await _alice_id(client)
+        await _create_session(factory, "s_1", owner=alice)
+        await _seed_one_event(factory, "s_1")
+        response = await client.post("/api/session-summaries/s_1/refresh")
+    assert response.status_code == 502
+
+
+async def test_refresh_without_inference_adapter_is_503(app_and_factory) -> None:
+    app, factory = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        alice = await _alice_id(client)
+        await _create_session(factory, "s_1", owner=alice)
+        response = await client.post("/api/session-summaries/s_1/refresh")
+    assert response.status_code == 503
+
+
+async def test_refresh_gate_precedes_adapter_check(app_and_factory) -> None:
+    """Unknown session with no inference configured: 404 (gate first),
+    never 503."""
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        response = await client.post("/api/session-summaries/nope/refresh")
+    assert response.status_code == 404
 
 
 async def test_detail_never_calls_inference(app_and_factory) -> None:

@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from octave.agent.composition import build_session_summarizer
+from octave.agent.errors import SessionNotFoundError, SummaryError
 from octave.agent.summaries import SessionSummary
 from octave.auth.deps import get_current_user
 from octave.db.adapter import DbAdapter
@@ -210,6 +211,44 @@ async def get_session_summary(
         session, db_adapter=_db_adapter(request)
     )
     summary = await summarizer.peek(session_id)
+    return SessionSummaryDetailResponse(
+        session_id=session_id,
+        summary=_detail(summary) if summary is not None else None,
+    )
+
+
+@router.post("/{session_id}/refresh")
+async def refresh_session_summary(
+    request: Request,
+    session_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+    session: AsyncSession = Depends(get_db_session),
+) -> SessionSummaryDetailResponse:
+    """Force-regenerate the summary via the LLM (``collect(force=True)``)
+    and commit. Empty transcript → null (nothing to summarize, not an
+    error). Upstream generation failure → 502; inference unconfigured →
+    503 (Octave boots fine without it — list/detail still answer)."""
+    await _access_gate(session, session_id, user)
+    adapter = getattr(request.app.state, "inference_adapter", None)
+    if adapter is None:
+        raise HTTPException(
+            status_code=503, detail="Inference adapter not configured"
+        )
+    summarizer = build_session_summarizer(
+        session,
+        db_adapter=_db_adapter(request),
+        adapter=adapter,
+        adapter_name=getattr(request.app.state, "inference_adapter_name", None),
+    )
+    try:
+        summary = await summarizer.collect(session_id, force=True)
+    except SessionNotFoundError as exc:  # defensive; the gate covers it
+        raise HTTPException(status_code=404, detail="Session not found") from exc
+    except SummaryError as exc:
+        raise HTTPException(
+            status_code=502, detail=f"Summary generation failed: {exc}"
+        ) from exc
+    await session.commit()
     return SessionSummaryDetailResponse(
         session_id=session_id,
         summary=_detail(summary) if summary is not None else None,

@@ -26,9 +26,7 @@ afterEach(() => {
 
 describe('summaries api', () => {
   it('fetches the summary list page', async () => {
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({ items: [], total: 0, limit: 20, offset: 0 })
-    );
+    fetchMock.mockResolvedValueOnce(jsonResponse({ items: [], total: 0, limit: 20, offset: 0 }));
     const page = await fetchSessionSummaries(20, 0);
     expect(page.total).toBe(0);
     const [url, init] = fetchMock.mock.calls[0] as unknown as [
@@ -41,9 +39,7 @@ describe('summaries api', () => {
   });
 
   it('fetches one session summary detail', async () => {
-    fetchMock.mockResolvedValueOnce(
-      jsonResponse({ session_id: 's/1', summary: null })
-    );
+    fetchMock.mockResolvedValueOnce(jsonResponse({ session_id: 's/1', summary: null }));
     const res = await fetchSessionSummaryDetail('s/1');
     expect(res.session_id).toBe('s/1');
     const [url] = fetchMock.mock.calls[0] as unknown as [string];
@@ -64,10 +60,7 @@ describe('summaries api', () => {
     );
     const res = await refreshSessionSummary('s_1');
     expect(res.summary?.title).toBe('T');
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [
-      string,
-      { method?: string },
-    ];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, { method?: string }];
     expect(url).toContain('/api/session-summaries/s_1/refresh');
     expect(init.method).toBe('POST');
   });

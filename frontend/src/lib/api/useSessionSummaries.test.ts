@@ -15,10 +15,7 @@ const row = (id: string): summariesApi.SessionSummaryListItem => ({
   summary: null,
 });
 
-const page = (
-  ids: string[],
-  total: number
-): summariesApi.SessionSummaryListPage => ({
+const page = (ids: string[], total: number): summariesApi.SessionSummaryListPage => ({
   items: ids.map(row),
   total,
   limit: 20,
@@ -31,9 +28,7 @@ beforeEach(() => {
 
 describe('useSessionSummaries', () => {
   it('loads the first page on mount', async () => {
-    vi.mocked(summariesApi.fetchSessionSummaries).mockResolvedValue(
-      page(['a', 'b'], 2)
-    );
+    vi.mocked(summariesApi.fetchSessionSummaries).mockResolvedValue(page(['a', 'b'], 2));
     const { result } = renderHook(() => useSessionSummaries());
     expect(result.current.state).toBe('loading');
     await waitFor(() => expect(result.current.state).toBe('ready'));
@@ -52,9 +47,7 @@ describe('useSessionSummaries', () => {
   });
 
   it('regenerate patches the row summary in place', async () => {
-    vi.mocked(summariesApi.fetchSessionSummaries).mockResolvedValue(
-      page(['a'], 1)
-    );
+    vi.mocked(summariesApi.fetchSessionSummaries).mockResolvedValue(page(['a'], 1));
     vi.mocked(summariesApi.refreshSessionSummary).mockResolvedValue({
       session_id: 'a',
       summary: {
@@ -73,12 +66,8 @@ describe('useSessionSummaries', () => {
   });
 
   it('regenerate throws and sets the error on failure', async () => {
-    vi.mocked(summariesApi.fetchSessionSummaries).mockResolvedValue(
-      page(['a'], 1)
-    );
-    vi.mocked(summariesApi.refreshSessionSummary).mockRejectedValue(
-      new ApiError(503, 'off')
-    );
+    vi.mocked(summariesApi.fetchSessionSummaries).mockResolvedValue(page(['a'], 1));
+    vi.mocked(summariesApi.refreshSessionSummary).mockRejectedValue(new ApiError(503, 'off'));
     const { result } = renderHook(() => useSessionSummaries());
     await waitFor(() => expect(result.current.state).toBe('ready'));
     await act(async () => {
@@ -99,8 +88,6 @@ describe('useSessionSummaries', () => {
     await waitFor(() => expect(result.current.state).toBe('ready'));
     expect(result.current.hasMore).toBe(true);
     act(() => result.current.loadOlder());
-    await waitFor(() =>
-      expect(result.current.items.map((i) => i.id)).toEqual(['a', 'b'])
-    );
+    await waitFor(() => expect(result.current.items.map((i) => i.id)).toEqual(['a', 'b']));
   });
 });

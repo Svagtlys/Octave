@@ -83,39 +83,36 @@ export function useSessionSummaries(pageSize = 20): UseSessionSummaries {
       .finally(() => setLoadingOlder(false));
   }, [loadingOlder, total, pageSize]);
 
-  const regenerate = useCallback(
-    async (sessionId: string): Promise<SummaryDetail | null> => {
-      let response;
-      try {
-        response = await refreshSessionSummary(sessionId);
-      } catch (err) {
-        setError(describeError(err, 'generate summary'));
-        throw err;
-      }
-      const summary = response.summary;
-      itemsRef.current = itemsRef.current.map((item) =>
-        item.id === sessionId
-          ? {
-              ...item,
-              summary: summary
-                ? {
-                    title: summary.title,
-                    snippet:
-                      summary.content.length <= 140
-                        ? summary.content
-                        : summary.content.slice(0, 139) + '…',
-                    model_name: summary.model_name,
-                    generated_at: summary.generated_at,
-                  }
-                : null,
-            }
-          : item
-      );
-      setItems(itemsRef.current);
-      return summary;
-    },
-    []
-  );
+  const regenerate = useCallback(async (sessionId: string): Promise<SummaryDetail | null> => {
+    let response;
+    try {
+      response = await refreshSessionSummary(sessionId);
+    } catch (err) {
+      setError(describeError(err, 'generate summary'));
+      throw err;
+    }
+    const summary = response.summary;
+    itemsRef.current = itemsRef.current.map((item) =>
+      item.id === sessionId
+        ? {
+            ...item,
+            summary: summary
+              ? {
+                  title: summary.title,
+                  snippet:
+                    summary.content.length <= 140
+                      ? summary.content
+                      : summary.content.slice(0, 139) + '…',
+                  model_name: summary.model_name,
+                  generated_at: summary.generated_at,
+                }
+              : null,
+          }
+        : item
+    );
+    setItems(itemsRef.current);
+    return summary;
+  }, []);
 
   return {
     items,

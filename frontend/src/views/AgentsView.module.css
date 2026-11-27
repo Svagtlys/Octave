@@ -1,0 +1,73 @@
+.page {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
+.listPane {
+  width: 320px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.detailPane {
+  flex: 1;
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.row:hover {
+  background: var(--color-accent-soft, rgba(139, 124, 246, 0.14));
+}
+
+.rowSelected {
+  border-color: var(--color-accent, #8b7cf6);
+  background: var(--color-accent-soft, rgba(139, 124, 246, 0.14));
+}
+
+.rowTitle {
+  font-weight: 600;
+}
+
+.rowSnippet {
+  font-size: 0.85rem;
+  opacity: 0.75;
+}
+
+.status {
+  opacity: 0.7;
+  font-size: 0.9rem;
+}
+
+.detailHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.detailMeta {
+  font-size: 0.8rem;
+  opacity: 0.65;
+  margin-bottom: 16px;
+}
+
+.detailBody {
+  white-space: pre-wrap;
+  line-height: 1.55;
+}

@@ -31,7 +31,10 @@ describe('summaries api', () => {
     );
     const page = await fetchSessionSummaries(20, 0);
     expect(page.total).toBe(0);
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      { method?: string; credentials?: string },
+    ];
     expect(url).toContain('/api/session-summaries?limit=20&offset=0');
     expect(init.method).toBe('GET');
     expect(init.credentials).toBe('include');
@@ -61,7 +64,10 @@ describe('summaries api', () => {
     );
     const res = await refreshSessionSummary('s_1');
     expect(res.summary?.title).toBe('T');
-    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [
+      string,
+      { method?: string },
+    ];
     expect(url).toContain('/api/session-summaries/s_1/refresh');
     expect(init.method).toBe('POST');
   });

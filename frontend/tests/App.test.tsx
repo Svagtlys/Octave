@@ -35,6 +35,20 @@ const sessionsMocks = vi.hoisted(() => ({
   deleteSession: vi.fn(),
 }));
 vi.mock('../src/lib/api/sessions', () => sessionsMocks);
+// The /agents result viewer mounts AgentsView -> useSessionSummaries; keep
+// the list hermetic with an empty page.
+const summariesMocks = vi.hoisted(() => ({
+  fetchSessionSummaries: vi.fn(),
+  fetchSessionSummaryDetail: vi.fn(),
+  refreshSessionSummary: vi.fn(),
+}));
+vi.mock('../src/lib/api/summaries', () => summariesMocks);
+vi.mocked(summariesMocks.fetchSessionSummaries).mockResolvedValue({
+  items: [],
+  total: 0,
+  limit: 20,
+  offset: 0,
+});
 vi.mocked(sessionsMocks.fetchSessions).mockResolvedValue({
   items: [
     {
@@ -82,9 +96,12 @@ describe('App routing', () => {
     expect(await screen.findByRole('heading', { level: 2, name: 'MCP Servers' })).toBeDefined();
   });
 
-  it('renders the Agents placeholder at /agents', async () => {
+  it('renders the Agents result viewer at /agents', async () => {
     renderAt('/agents');
     expect(await screen.findByRole('heading', { level: 2, name: 'Agents' })).toBeDefined();
+    expect(
+      screen.queryByText('Agent dashboard and result viewer land in the Agent Manager UI issues.')
+    ).toBeNull();
   });
 
   it('renders the Settings placeholder at /settings', async () => {

@@ -5,13 +5,20 @@ produces the whole stage chain in the transcript, in order. The LLM
 decider's 1:1 fast path needs no completion call for the single agent.
 """
 
+from collections.abc import AsyncIterator
+from pathlib import Path
+
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from octave.agent import AgentInstanceManager
 from octave.agent.composition import build_message_router
 from octave.agent.router import StopReason
+from octave.db.config import DbConfig
 from octave.db.event_store import EventStore
-from octave.db.models import Agent, Session, User
+from octave.db.models import Agent, Base, Session, User
+from octave.db.sqlite_adapter import SqliteVecAdapter
+from octave.db.types import EventKind
 from tests.agent.fakes import ScriptedAdapter, final_result, tool_call, tool_result
 from tests.agent.test_turn_runner import FakeRegistry  # reuse the fake
 
@@ -76,3 +83,66 @@ async def test_deliver_produces_full_stage_chain(
     # The bracket covers the runner's appends through the reply event.
     turn = outcome.turns[0]
     assert turn.seq_start == 2 and turn.seq_end == 5
+
+
+@pytest_asyncio.fixture
+async def vec_env(
+    tmp_path: Path,
+) -> AsyncIterator[tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]]]:
+    """Vec-enabled DB: VaultStore.upsert calls remove_vector, so the vec0
+    table must exist (mirrors tests/agent/test_summaries.py::env)."""
+    config = DbConfig(
+        adapter="sqlite",
+        url=f"sqlite+aiosqlite:///{tmp_path / 'composition.db'}",
+        embedding_dim=4,
+    )
+    adapter = SqliteVecAdapter(config)
+    engine = adapter.make_engine()
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await adapter.ensure_vector_store(conn)
+    yield adapter, adapter.make_session_factory(engine)
+    await engine.dispose()
+
+
+async def test_build_session_summarizer_peek_reads_collected_summary(
+    vec_env: tuple[SqliteVecAdapter, async_sessionmaker[AsyncSession]],
+) -> None:
+    """The helper is the production seam: collect persists, peek reads back."""
+    from octave.agent.composition import build_session_summarizer
+    from octave.db.models import Participant, SessionParticipant
+
+    adapter, factory = vec_env
+    async with factory() as session:
+        session.add(User(id="u_1", username="alice", display_name="Alice"))
+        session.add(Participant(id="p_u1", user_id="u_1", label="Alice"))
+        session.add(Session(id="s_1", created_by_user_id="u_1", status="active"))
+        session.add(SessionParticipant(session_id="s_1", participant_id="p_u1"))
+        await EventStore(session).append(
+            "s_1",
+            EventKind.USER_MESSAGE,
+            author_participant_id="p_u1",
+            payload={"content": "hello"},
+        )
+        await session.commit()
+
+    scripted = ScriptedAdapter([final_result("Title: Recap\nWe said hello.")])
+    async with factory() as session:
+        summarizer = build_session_summarizer(
+            session,
+            db_adapter=adapter,
+            adapter=scripted,
+            adapter_name="fake",
+        )
+        summary = await summarizer.collect("s_1", force=True)
+        await session.commit()
+    assert summary is not None and summary.title == "Recap"
+    assert len(scripted.requests) == 1
+
+    async with factory() as session:
+        peeked = await build_session_summarizer(
+            session, db_adapter=adapter
+        ).peek("s_1")
+    assert peeked is not None
+    assert peeked.title == "Recap" and peeked.content == "We said hello."
+    assert peeked.model_name == "fake"

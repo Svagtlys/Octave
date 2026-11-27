@@ -11,6 +11,7 @@ from octave.middleware import LogRequestMiddleware, add_cors, add_error_handlers
 from octave.routes.auth import router as auth_router
 from octave.routes.health import router as health_router
 from octave.routes.sessions import router as sessions_router
+from octave.routes.summaries import router as summaries_router
 from octave.websocket.connection import router as ws_router
 
 AppLifespan = Callable[[FastAPI], AbstractAsyncContextManager[None, bool | None]]
@@ -52,4 +53,5 @@ app.add_middleware(LogRequestMiddleware)
 app.include_router(health_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")
 app.include_router(sessions_router, prefix="/api")
+app.include_router(summaries_router, prefix="/api")
 app.include_router(ws_router)

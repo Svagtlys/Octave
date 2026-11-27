@@ -16,6 +16,7 @@ import SetupView from './views/SetupView';
 import GalleryView from './views/GalleryView';
 import SessionChatView from './views/SessionChatView';
 import SessionsHubView from './views/SessionsHubView';
+import AgentsView from './views/AgentsView';
 
 function NotFoundView() {
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -138,12 +139,7 @@ const agentsRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: '/agents',
   staticData: { title: 'Agents' },
-  component: () => (
-    <PlaceholderView
-      title="Agents"
-      note="Agent dashboard and result viewer land in the Agent Manager UI issues."
-    />
-  ),
+  component: AgentsView,
 });
 
 const settingsRoute = createRoute({

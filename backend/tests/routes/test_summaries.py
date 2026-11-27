@@ -243,3 +243,95 @@ async def test_list_pagination_bounds(app_and_factory) -> None:
     assert len(page["items"]) == 2 and page["total"] == 3
     assert (page["limit"], page["offset"]) == (2, 0)
     assert bad.status_code == 422
+
+
+# -- detail -------------------------------------------------------------------
+
+
+async def test_detail_requires_auth(app_and_factory) -> None:
+    app, _ = app_and_factory
+    async with await _client(app) as client:
+        assert (await client.get("/api/session-summaries/s_1")).status_code == 401
+
+
+async def test_detail_404_unknown_403_non_member(app_and_factory) -> None:
+    app, factory = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        alice = await _alice_id(client)
+        assert (
+            await client.get("/api/session-summaries/nope")
+        ).status_code == 404
+        await _create_session(factory, "s_1", owner=alice)
+        # bob exists but never joined s_1.
+        created = await client.post(
+            "/api/auth/users",
+            json={
+                "username": "bob",
+                "password": "pw2",
+                "display_name": "Bob",
+                "role": "member",
+            },
+        )
+        assert created.status_code == 201
+        bob = await _client(app)
+        login = await bob.post(
+            "/api/auth/login", json={"username": "bob", "password": "pw2"}
+        )
+        assert login.status_code == 200
+        assert (await bob.get("/api/session-summaries/s_1")).status_code == 403
+        await bob.aclose()
+
+
+async def test_detail_returns_null_without_cache(app_and_factory) -> None:
+    app, factory = app_and_factory
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        alice = await _alice_id(client)
+        await _create_session(factory, "s_1", owner=alice)
+        response = await client.get("/api/session-summaries/s_1")
+    assert response.status_code == 200
+    assert response.json() == {"session_id": "s_1", "summary": None}
+
+
+async def test_detail_returns_full_content_from_cache(app_and_factory) -> None:
+    app, factory = app_and_factory
+    long_body = "x" * 300
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        alice = await _alice_id(client)
+        await _create_session(factory, "s_1", owner=alice)
+        await _seed_summary(
+            factory,
+            app.state.db_adapter,
+            "s_1",
+            user_id=alice,
+            name="Weather",
+            content=long_body,
+        )
+        response = await client.get("/api/session-summaries/s_1")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["summary"]["title"] == "Weather"
+    assert body["summary"]["content"] == long_body  # full, not truncated
+    assert body["summary"]["model_name"] == "m-1"
+
+
+async def test_detail_never_calls_inference(app_and_factory) -> None:
+    """No app.state.inference_adapter at all: peek still answers 200."""
+    app, factory = app_and_factory
+    assert not hasattr(app.state, "inference_adapter")
+    async with await _client(app) as client:
+        await _bootstrap(client)
+        alice = await _alice_id(client)
+        await _create_session(factory, "s_1", owner=alice)
+        await _seed_summary(
+            factory,
+            app.state.db_adapter,
+            "s_1",
+            user_id=alice,
+            name="Weather",
+            content="Sunny.",
+        )
+        response = await client.get("/api/session-summaries/s_1")
+    assert response.status_code == 200

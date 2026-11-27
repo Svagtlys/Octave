@@ -16,6 +16,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from octave.agent.composition import build_session_summarizer
+from octave.agent.summaries import SessionSummary
 from octave.auth.deps import get_current_user
 from octave.db.adapter import DbAdapter
 from octave.db.deps import get_db_session
@@ -170,4 +172,45 @@ async def list_session_summaries(
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+def _detail(summary: SessionSummary) -> SummaryDetailResponse:
+    return SummaryDetailResponse(
+        title=summary.title,
+        content=summary.content,
+        model_name=summary.model_name,
+        generated_at=summary.generated_at,
+    )
+
+
+async def _access_gate(session: AsyncSession, session_id: str, user: User) -> None:
+    """Owner or live participant may view/refresh a summary — 404 unknown,
+    403 forbidden (mirrors the transcript route and the WS join guard)."""
+    verdict = await SessionStore(session).resolve_access(session_id, user.id)
+    if verdict == "missing":
+        raise HTTPException(status_code=404, detail="Session not found")
+    if verdict == "denied":
+        raise HTTPException(
+            status_code=403, detail="Not a member of this session"
+        )
+
+
+@router.get("/{session_id}")
+async def get_session_summary(
+    request: Request,
+    session_id: str,
+    user: Annotated[User, Depends(get_current_user)],
+    session: AsyncSession = Depends(get_db_session),
+) -> SessionSummaryDetailResponse:
+    """Cached summary only via ``peek`` — never calls the adapter, so the
+    route answers even with inference unconfigured."""
+    await _access_gate(session, session_id, user)
+    summarizer = build_session_summarizer(
+        session, db_adapter=_db_adapter(request)
+    )
+    summary = await summarizer.peek(session_id)
+    return SessionSummaryDetailResponse(
+        session_id=session_id,
+        summary=_detail(summary) if summary is not None else None,
     )
